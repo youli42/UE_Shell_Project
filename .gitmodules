@@ -1,3 +1,6 @@
 [submodule "Plugins/Shell_UE"]
 	path = Plugins/Shell_UE
 	url = git@github.com:youli42/Shell_UE.git
+[submodule "Plugins/DreamShader"]
+	path = Plugins/DreamShader
+	url = git@github.com:youli42/DreamShader.git
