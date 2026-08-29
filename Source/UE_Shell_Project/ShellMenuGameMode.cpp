@@ -6,6 +6,7 @@
 #include "Shell/Terminal/ShellSubsystem.h"
 #include "TimerManager.h"
 
+#include "ShellProjectCommands.h"
 #include "ShellProjectMenuPawn.h"
 #include "ShellProjectPlayerController.h"
 
@@ -52,6 +53,9 @@ void AShellMenuGameMode::TryStartLoginFlow()
 	}
 
 	bLoginFlowStarted = true;
+
+	// 宿主自定义命令注册（hello / roll）：幂等，进菜单后终端立即可用。
+	ShellProjectCommands::RegisterProjectCommands(Shell->GetRegistry());
 
 	if (!Shell->IsTerminalOpen())
 	{

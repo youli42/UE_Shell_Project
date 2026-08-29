@@ -53,6 +53,9 @@
 # readme
 !/[Rr][Ee][Aa][Dd][Mm][Ee].[Mm][Dd]
 
+# 项目文档
+!/docs/**/*
+
 # 开源协议
 !/LICENSE
 
