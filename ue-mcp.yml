@@ -1,0 +1,13 @@
+ue-mcp:
+  version: 1
+  disable:
+    - niagara
+    - pcg
+    - audio
+    - gameplay
+    - networking
+    - demo
+  contentRoots:
+    - /Game/
+tasks: {}
+flows: {}
