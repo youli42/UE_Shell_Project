@@ -558,7 +558,8 @@ cast fireball      → "not enough mana (0/30)"（法力耗尽时）
 
 > 起因：打包（Development/Win64）后运行，终端页面打开但**完全没有文字**，
 > Tab 开关、命令、输入全部无效。游戏进程本身正常运行（日志持续 tick），
-> 并不是卡死。经排查实际是两个独立问题叠加，记录如下。
+> 并不是卡死。修复后第二个问题浮出：**登录成功但不切到 Gameplay 地图，
+> 且 Tab 再也呼不出终端**。三个独立问题叠加，记录如下。
 
 ### 10.1 必要条件（每次打包前核对）
 
@@ -574,6 +575,23 @@ Shell_UE 的 CJK 字体、命令/文件系统数据表、输入映射、蓝图�
 +DirectoriesToAlwaysCook=(Path="/Shell_UE/Shell/Input")
 +DirectoriesToAlwaysCook=(Path="/Shell_UE/Shell/Libraries")
 ```
+
+**①-b 插件里的 `.umap` 只认 MapsToCook（坑：-allmaps 与目录配置都不覆盖）。**
+登录成功后 `GameFlowCommands.cpp` 会 `ClientTravel` 到 `UShellSettings.GameplayLevelPath`
+（默认 `/Shell_UE/Shell/Maps/Gameplay`）。这张地图在插件内容里：
+`-allmaps` 只扫工程 Maps 目录，`DirectoriesToAlwaysCook` 实测**不会 cook `.umap`**；
+MainMenu 能进包只是因为它是 GameDefaultMap。Gameplay 缺包的症状很有迷惑性：
+travel 静默失败停在 MainMenu，而登录流程此前已 `CloseTerminal()` 把输入切成
+game-only 模式（卸掉了 `IMC_Shell`），于是 **Tab 也呼不出终端**——看似"登录后
+卡死"，实为地图缺失 + 输入模式切换的叠加。修复：
+
+```ini
+[/Script/UnrealEd.ProjectPackagingSettings]
++MapsToCook=(FilePath="/Shell_UE/Shell/Maps/Gameplay.umap")
+```
+
+> 宿主若把 `GameplayLevelPath` 指到自己的地图，改用自己地图的路径即可；
+> 原则相同：**凡 ClientTravel 的目标地图，都必须进 MapsToCook**。
 
 **② F_CJK 字体资源必须保持 Inline 加载策略（插件已内置，勿改回）。**
 `F_CJK` 的 LoadingPolicy 若为 `Stream`（从磁盘文件流式读取），打包进 pak 后
@@ -593,8 +611,11 @@ Unreal 编辑器加载过 F_CJK 等资源后会锁住 `.uasset` 文件，UAT coo
 "C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\RunUAT.bat" BuildCookRun ^
   -project=D:\SSDWP\UE\UE_Shell_Project\UE_Shell_Project.uproject ^
   -noP4 -platform=Win64 -clientconfig=Development ^
-  -skipbuild -nocompileeditor -cook -allmaps -stage -pak -iostore -compressed -unattended
+  -skipbuild -nocompileeditor -cook -stage -pak -iostore -compressed -unattended
 ```
+
+> 不要加 `-allmaps`：它会把 cook 的地图选择替换成"工程全部地图"，反而
+> **不包含**插件地图（见 ①-b），地图靠上面 ini 里的 `MapsToCook` 保证。
 
 产物默认输出到 `Saved\StagedBuilds\Windows`（`-stagedirectory` 实测不生效），
 同步到自选目录（如 `Saved\Out\Windows`）用普通复制即可。
@@ -607,7 +628,9 @@ Unreal 编辑器加载过 F_CJK 等资源后会锁住 `.uasset` 文件，UAT coo
 | 同上 | `FT_Open_Face` 出现 **0** 次（Stream 策略残留时报此错） |
 | 同上 | `[Shell] DataTable row 'hint': Blueprint command 'hint' registered` 存在（证明命令表+蓝图库进包） |
 | 终端画面 | 标题 `SHELL v0.1 — 伪终端`、`root@blui:/# login` 回显、`username:` 提示符、底部 `Tab 补全 | Esc 关闭` 状态栏全部渲染 |
+| 登录全流程 | 输入演示账号（无配置时内置回退：`alice` / `alice123`）→ 出现 `switching to gameplay...` → 约 1.5s 后进入 Gameplay 地图 |
 | Manifest_UFSFiles_Win64.txt | 含 `F_CJK.uasset`、`DT_ShellCommands/DT_ShellFileSystem`、`IA_TerminalToggle/IMC_Shell`、`LB_Hint`（Inline 字体不再有 `.ufont` 散文件，属正常） |
+| Manifest_UFSFiles_Win64.txt | **含 `Shell/Maps/Gameplay.umap`**（只有 MainMenu = ①-b 没配，登录切图必挂） |
 
 ### 10.3 两个容易误判的现象
 
@@ -623,6 +646,10 @@ Unreal 编辑器加载过 F_CJK 等资源后会锁住 `.uasset` 文件，UAT coo
 1. 运行日志搜 `SkipPackage` —— 命中即软引用资产没进包（→ 10.1 ①）。
 2. 补配置后若日志出现 `FT_Open_Face failed 0x02` —— 字体 Stream 策略在打包
    环境失效（→ 10.1 ②），改 Inline 后需**重新 Cook+Stage**。
-3. 视觉验证不必抢前台：启动游戏后用 `PrintWindow`（`PW_RENDERFULLCONTENT`）
+3. 终端有字但登录后不切图 / Tab 失效 —— 查
+   `Manifest_UFSFiles_Win64.txt` 是否含 `Gameplay.umap`（→ 10.1 ①-b）；
+   地图缺失时 `ClientTravel` 静默失败，且登录流程已把输入切成 game-only，
+   Tab 自然无效。
+4. 视觉验证不必抢前台：启动游戏后用 `PrintWindow`（`PW_RENDERFULLCONTENT`）
    抓窗口位图，或加 `-ExecCmds="HighResShot 2"`（注意它执行太早，仅适合拍
    启动画面；终端需另想办法延迟触发）。
