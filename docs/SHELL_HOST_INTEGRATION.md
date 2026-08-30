@@ -576,6 +576,12 @@ Shell_UE 的 CJK 字体、命令/文件系统数据表、输入映射、蓝图�
 +DirectoriesToAlwaysCook=(Path="/Shell_UE/Shell/Libraries")
 ```
 
+> **这段配置只能由宿主提供，插件无法自包含**：实测把同段配置放进插件
+> `Plugins/Shell_UE/Config/DefaultGame.ini` 和 `DefaultEngine.ini` 均不生效
+> （UE 5.8 的 cook 不把插件 Config 并入 `ProjectPackagingSettings` 配置链）。
+> 详见插件坑档
+> `Plugins/Shell_UE/RawContent/doc/开发踩坑记录/2026-08-30-22-*.md`。
+
 **①-b 插件里的 `.umap` 只认 MapsToCook（坑：-allmaps 与目录配置都不覆盖）。**
 登录成功后 `GameFlowCommands.cpp` 会 `ClientTravel` 到 `UShellSettings.GameplayLevelPath`
 （默认 `/Shell_UE/Shell/Maps/Gameplay`）。这张地图在插件内容里：
@@ -601,21 +607,32 @@ F_CJK 这一个字体面**（`ShellFontUtil.cpp` 的 CompositeFont 只挂了它�
 失败 = 整个终端无字。已将 F_CJK 改为 `Inline`（数据嵌入 uasset，无运行时文件
 依赖），修改前备份在 `Saved/F_CJK.uasset.stream.bak`。
 
+**②-b 登录切图前已有运行期守卫（插件自带，宿主无需配置）。**
+`GameFlowCommands.cpp` 的 `TravelToLevel` 出发前会检查目标地图包是否存在；
+缺失时打 `Error` 级日志并输出终末端 `map not found: <path>`，不再像旧版
+那样 ClientTravel 静默失败、让人误以为"登录后卡死"。
+
 **③ 打包时关闭占用插件资产的编辑器。**
 Unreal 编辑器加载过 F_CJK 等资源后会锁住 `.uasset` 文件，UAT cook 阶段写入
 失败（`正由另一进程使用`）。打包前保存并关闭编辑器，或至少关闭相关资产标签页。
 
-**④ 参考打包命令（Development/Win64，二进制已构建时跳过编译）：**
+**④ 参考打包命令（Development/Win64）：**
 
 ```bat
 "C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\RunUAT.bat" BuildCookRun ^
   -project=D:\SSDWP\UE\UE_Shell_Project\UE_Shell_Project.uproject ^
   -noP4 -platform=Win64 -clientconfig=Development ^
-  -skipbuild -nocompileeditor -cook -stage -pak -iostore -compressed -unattended
+  -build -nocompileeditor -cook -stage -pak -iostore -compressed -unattended
 ```
 
-> 不要加 `-allmaps`：它会把 cook 的地图选择替换成"工程全部地图"，反而
-> **不包含**插件地图（见 ①-b），地图靠上面 ini 里的 `MapsToCook` 保证。
+> 三个坑：
+> - **不带 `-build`（且未写 `-skipbuild`）时 UAT 根本不会编译**，改了 C++
+>   也不会重编，日志直接从 "Setting up ProjectParams" 跳到 Cook。编译必须
+>   显式 `-build`；二进制未变时用 `-skipbuild` 提速。
+> - **不要加 `-allmaps`**：它会把 cook 的地图选择替换成"工程全部地图"，反而
+>   **不包含**插件地图（见 ①-b），地图靠上面 ini 里的 `MapsToCook` 保证。
+> - `-stagedirectory` 实测不生效，产物默认在 `Saved\StagedBuilds\Windows`，
+>   自选目录用脚本复制即可。
 
 产物默认输出到 `Saved\StagedBuilds\Windows`（`-stagedirectory` 实测不生效），
 同步到自选目录（如 `Saved\Out\Windows`）用普通复制即可。
