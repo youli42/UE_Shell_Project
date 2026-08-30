@@ -551,3 +551,78 @@ cast fireball      → "not enough mana (0/30)"（法力耗尽时）
 | 脚本执行器 | `ShellScript.h/.cpp`、`ScriptCommands.cpp`（sh/edit） |
 | 商店 | `ShellQuickCommandStore.h/.cpp`、`StoreCommands.cpp`、`DT_ShellQuickCommandStore` |
 | 管道执行器 | `ShellPipeline.h/.cpp`、`ShellParser.h`（token） |
+
+---
+
+## 10. 打包（Cook+Stage）必要条件与踩坑记录（2026-08-30）
+
+> 起因：打包（Development/Win64）后运行，终端页面打开但**完全没有文字**，
+> Tab 开关、命令、输入全部无效。游戏进程本身正常运行（日志持续 tick），
+> 并不是卡死。经排查实际是两个独立问题叠加，记录如下。
+
+### 10.1 必要条件（每次打包前核对）
+
+**① 软引用资产必须显式加入 DirectoriesToAlwaysCook。**
+Shell_UE 的 CJK 字体、命令/文件系统数据表、输入映射、蓝图命令库都是 C++ 通过
+`LoadObject` / `FSoftObjectPath` 软引用的，**cook 依赖追踪看不到它们**，不加配置就
+不会进 pak。宿主工程的 `Config/DefaultGame.ini` 必须包含（壳工程已配好）：
+
+```ini
+[/Script/UnrealEd.ProjectPackagingSettings]
++DirectoriesToAlwaysCook=(Path="/Shell_UE/Shell/Fonts")
++DirectoriesToAlwaysCook=(Path="/Shell_UE/Shell/Data")
++DirectoriesToAlwaysCook=(Path="/Shell_UE/Shell/Input")
++DirectoriesToAlwaysCook=(Path="/Shell_UE/Shell/Libraries")
+```
+
+**② F_CJK 字体资源必须保持 Inline 加载策略（插件已内置，勿改回）。**
+`F_CJK` 的 LoadingPolicy 若为 `Stream`（从磁盘文件流式读取），打包进 pak 后
+运行时会按相对路径直接打开 `.ufont` 失败（日志报
+`FT_Open_Face failed with error code 0x02`）。由于终端的**全部文字（含英文）都走
+F_CJK 这一个字体面**（`ShellFontUtil.cpp` 的 CompositeFont 只挂了它），这一个
+失败 = 整个终端无字。已将 F_CJK 改为 `Inline`（数据嵌入 uasset，无运行时文件
+依赖），修改前备份在 `Saved/F_CJK.uasset.stream.bak`。
+
+**③ 打包时关闭占用插件资产的编辑器。**
+Unreal 编辑器加载过 F_CJK 等资源后会锁住 `.uasset` 文件，UAT cook 阶段写入
+失败（`正由另一进程使用`）。打包前保存并关闭编辑器，或至少关闭相关资产标签页。
+
+**④ 参考打包命令（Development/Win64，二进制已构建时跳过编译）：**
+
+```bat
+"C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\RunUAT.bat" BuildCookRun ^
+  -project=D:\SSDWP\UE\UE_Shell_Project\UE_Shell_Project.uproject ^
+  -noP4 -platform=Win64 -clientconfig=Development ^
+  -skipbuild -nocompileeditor -cook -allmaps -stage -pak -iostore -compressed -unattended
+```
+
+产物默认输出到 `Saved\StagedBuilds\Windows`（`-stagedirectory` 实测不生效），
+同步到自选目录（如 `Saved\Out\Windows`）用普通复制即可。
+
+### 10.2 验证清单（打包后 5 分钟内可完成）
+
+| 检查项 | 通过标准 |
+|---|---|
+| 运行日志 `<打包目录>\UE_Shell_Project\Saved\Logs\UE_Shell_Project.log` | `SkipPackage` 出现 **0** 次 |
+| 同上 | `FT_Open_Face` 出现 **0** 次（Stream 策略残留时报此错） |
+| 同上 | `[Shell] DataTable row 'hint': Blueprint command 'hint' registered` 存在（证明命令表+蓝图库进包） |
+| 终端画面 | 标题 `SHELL v0.1 — 伪终端`、`root@blui:/# login` 回显、`username:` 提示符、底部 `Tab 补全 | Esc 关闭` 状态栏全部渲染 |
+| Manifest_UFSFiles_Win64.txt | 含 `F_CJK.uasset`、`DT_ShellCommands/DT_ShellFileSystem`、`IA_TerminalToggle/IMC_Shell`、`LB_Hint`（Inline 字体不再有 `.ufont` 散文件，属正常） |
+
+### 10.3 两个容易误判的现象
+
+- **顶层 171KB 的 `UE_Shell_Project.exe` 不是打包错误。** 它是 UE 5.8 的
+  `BootstrapPackagedGame` 引导桩，负责定位并启动
+  `UE_Shell_Project/Binaries/Win64/` 下的完整主程序（338MB）。
+  与 Binaries 下的 exe 体积不一致是正常形态，双击顶层 exe 运行即可。
+- **运行日志里的 `Failed to read '.../ShellPlayer.sav'` 是首次运行正常现象**
+  （存档尚未创建），不是错误。
+
+### 10.4 排查路径复盘（供下次加速）
+
+1. 运行日志搜 `SkipPackage` —— 命中即软引用资产没进包（→ 10.1 ①）。
+2. 补配置后若日志出现 `FT_Open_Face failed 0x02` —— 字体 Stream 策略在打包
+   环境失效（→ 10.1 ②），改 Inline 后需**重新 Cook+Stage**。
+3. 视觉验证不必抢前台：启动游戏后用 `PrintWindow`（`PW_RENDERFULLCONTENT`）
+   抓窗口位图，或加 `-ExecCmds="HighResShot 2"`（注意它执行太早，仅适合拍
+   启动画面；终端需另想办法延迟触发）。
