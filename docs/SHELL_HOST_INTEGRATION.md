@@ -514,3 +514,40 @@ cast fireball      → "not enough mana (0/30)"（法力耗尽时）
 | 插件命令注册入口 | `Plugins/Shell_UE/Source/Shell_UE/Private/Shell/Terminal/ShellSubsystem.cpp`（`Initialize` 内 `RegisterBuiltInCommands` / `RegisterGASCommands` 等） |
 | GAS 命令实现 | `Plugins/Shell_UE/Source/Shell_UE/Private/Shell/Terminal/ShellGASCommands.cpp` |
 | 插件官方接入文档 | `Plugins/Shell_UE/RawContent/doc/11-宿主接入指南.md`、`Plugins/Shell_UE/README.md`、`Plugins/Shell_UE/AGENTS.md` |
+
+---
+
+## 9. 快捷指令 / 商店 / 脚本（2026-08-30 新增，插件 M2–M4）
+
+详见插件文档 `Plugins/Shell_UE/RawContent/doc/12-快捷指令与脚本.md`。宿主要点：
+
+1. **玩家快捷指令**：终端输入行上方自动出现 CRT 风格 chip 栏；数字键 1-9 触发
+   （仅输入框为空且无修饰键时接管，不影响打字）。每条命令可配置
+   「立即执行（与真实回车同路径）」或「仅填充输入框」。
+   列表 API（`UShellSubsystem`，均 BlueprintCallable）：
+   `GetQuickCommands / AddQuickCommand / RemoveQuickCommand / SetQuickCommandMode / RunQuickCommand`；
+   列表变化广播 `OnQuickCommandsChanged`。持久化走 SaveGame
+   （`ShellSettings.SaveSlotName/SaveUserIndex`，默认槽 `ShellPlayer`）。
+   终端命令 `qcmd list / add <label> <cmd> / mode <n> <exec|fill> / rm <n>`（需登录）。
+2. **商店目录**：插件自带 `/Shell_UE/Shell/Data/DT_ShellQuickCommandStore`
+   （行结构 `FShellQuickCommandRow`：Label/CommandLine/Mode/Description/ScriptContent，
+   行键即商店 id）。宿主替换 = Project Settings → Shell Settings → `ShellStoreTable`；
+   置空 = 关闭商店。终端命令 `store list / info <id> / install <id>`（需登录，
+   已装条目带 ✓）。脚本类条目（`ScriptContent` 非空）安装时写入
+   `/home/scripts-store/<行键>.sh` 并生成 `sh` 命令。远程商店后续实现
+   `IShellQuickCommandStore` 接口即可插入，UI/命令不动。
+3. **玩家脚本**：`edit <path>` 捕获模式（后续行逐行入文件，`end` 保存，
+   无参 `edit` 取消）+ `sh <path>` 运行。语法 v1：每行一个管道、`#` 注释、
+   `set NAME value` 变量、`$var` 整词替换、`repeat N <管道>`、出错即停、2000 行预算。
+   `/home/**` 下的写入（重定向/编辑/商店脚本）自动持久化到 SaveGame；
+   宿主切换玩家档案用 `UShellSaveGameStore::Reload()` + `UShellVirtualFS::ReloadOverlay()`。
+4. **管道语法**：`|`、`&&`、`;`、`>`、`>>` 对所有命令（含宿主自定义命令）生效；
+   `ExecuteShellCommand` 同样支持。含这些操作符的快捷指令命令行请整体加引号。
+
+| 功能 | 壳工程/插件参考 |
+|---|---|
+| 快捷指令数据与持久化 | `Plugins/Shell_UE/.../Public/Shell/Terminal/ShellQuickCommand.h`、`ShellSaveGame.h/.cpp` |
+| 快捷栏 UI + 数字键 | `ShellTerminalPanel.cpp`（`RefreshQuickBar` / `HandleQuickCommandKey`） |
+| 脚本执行器 | `ShellScript.h/.cpp`、`ScriptCommands.cpp`（sh/edit） |
+| 商店 | `ShellQuickCommandStore.h/.cpp`、`StoreCommands.cpp`、`DT_ShellQuickCommandStore` |
+| 管道执行器 | `ShellPipeline.h/.cpp`、`ShellParser.h`（token） |
