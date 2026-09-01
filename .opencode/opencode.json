@@ -6,7 +6,7 @@
       "command": [
         "npx",
         "ue-mcp",
-        "./Project_Wall.uproject"
+        "./UE_Shell_Project.uproject"
       ],
       "enabled": true
     }
