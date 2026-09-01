@@ -56,7 +56,7 @@ PrivateDependencyModuleNames: Slate, SlateCore, DeveloperSettings
 
 > `SListView` 会销毁离屏行（含输入行，焦点/IME 状态丢失）。实际采用 `SScrollBox` + 行池化 `STextBlock`。
 
-因此输入行不是独立的固定行，而是**作为 `SScrollBox` 的最后一个 slot 嵌入**，随内容一起滚动（见 `ShellTerminalPanel.cpp:283-290`）。这决定了滚动容器不能虚拟化。
+因此输入行不是独立的固定行，而是**作为 `SScrollBox` 的最后一个 slot 嵌入**，随内容一起滚动（见 `ShellTerminalPanel.cpp:254-261`）。这决定了滚动容器不能虚拟化。
 
 ---
 
@@ -82,14 +82,14 @@ SOverlay                                   根容器，五层叠放
 │  │  ├─ STextBlock ×N   输出行（行池化，超上限复用旧控件）
 │  │  └─ SBox        输入行（随内容一起滚动）
 │  │     ├─ SHorizontalBox  快捷指令 chip 栏（数字键 1-9，每页 9 条，« » 翻页）
-│  │     ├─ SHorizontalBox  提示符 STextBlock + SOverlay(SEditableText + 方块光标)
+│  │     ├─ SHorizontalBox  提示符 STextBlock + SEditableText（原生竖线光标）
 │  │     └─ STextBlock      补全建议行
 │  └─ STextBlock     状态栏 "history:N | Tab 补全 | Esc 关闭"
 ├─ SImage            扫描线（4×4 程序化贴图，平铺，HitTestInvisible）
 └─ SImage            CRT 暗角 M_CRT_Vignette（HitTestInvisible）
 ```
 
-### 3.3 行池化（`AppendLine`，`ShellTerminalPanel.cpp:309`）
+### 3.3 行池化（`AppendLine`，`ShellTerminalPanel.cpp:279`）
 
 ```
 Lines.Add(行)
@@ -103,15 +103,17 @@ while Lines.Num() > Settings->HistoryCapacity:
 
 行颜色由 `Shell::Terminal::GetColorForType(EShellOutputType)` 决定（`Info/Success/Error/Input/System`）。
 
-### 3.4 自制方块光标
+### 3.4 方块光标（已于 2026-09-01 移除）
 
-`SEditableText` 自带的是竖线 caret，不符合终端观感，因此**自制块状光标**：
+早期版本曾自制块状光标（双层 `SBox` 叠 `SColorBlock` + `FSlateFontMeasure` 测量文本宽 + 0.5s 闪烁计时器），
+后因"方块遮挡字形、与标准输入 UX 不符"被**移除**：直接使用 `SEditableText` 原生竖线光标
+（自带闪烁与失焦隐藏，`BuildEditableStyle` 的字体/描边样式不受影响）。
 
-- 结构上用 `SBox CaretOffsetHost`（`HAlign_Right`）包 `SBox CaretBlock` → `SColorBlock`（`0.498,1.0,0,1`）。
-- `UpdateCaret()` 用 `FSlateFontMeasure` 测量完整输入文本宽度，把宿主宽度设为该值，光标块右对齐即精确落在文本末尾。
-- 块宽 = 一个拉丁字符 `W` 宽；块高 = 一个全角字符 `中` 高（整格光标）。
-- 密码态把测量文本替换为等长 `•`（`ShellTerminalPanel.cpp:1001-1005`）。
-- 闪烁用 `RegisterActiveTimer(0.5f, HandleCaretBlink)`，失焦时 `StopCaretBlink()`。
+移除范围（`ShellTerminalPanel.h/.cpp`）：
+- 删除成员 `CaretOffsetHost` / `CaretBlock` / `InputOverlay` / `bCaretVisible` / `bBlinkTimerActive`；
+- 删除函数 `UpdateCaret` / `StartCaretBlink` / `StopCaretBlink` / `HandleCaretBlink` / `HandleInputTextChanged`；
+- 删除 `OnFocusLost` 覆写与输入行上叠的 `SOverlay` 光标层（`SEditableText` 直接挂 `SHorizontalBox`）；
+- 同步删除不再使用的 `Fonts/FontMeasure.h` 包含。
 
 ### 3.5 CRT 视觉
 
@@ -126,7 +128,7 @@ while Lines.Num() > Settings->HistoryCapacity:
 >
 > 字体以 `UPROPERTY(Transient) TObjectPtr<UFontFace> ShellCJKFont` 持有作 GC 根——`FCompositeFont` 的 UObject 指针对 GC 不可见。
 
-### 3.6 输入处理（`OnPreviewKeyDown`，`ShellTerminalPanel.cpp:650`）
+### 3.6 输入处理（`OnPreviewKeyDown`，`ShellTerminalPanel.cpp:617`）
 
 | 按键 | 行为 |
 | --- | --- |

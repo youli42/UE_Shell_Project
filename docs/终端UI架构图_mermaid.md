@@ -29,7 +29,7 @@ flowchart TD
     end
 
     subgraph L4["⑤ 纯 Slate 面板 — 全部渲染与输入"]
-        P["【Private/Shell/Terminal/ShellTerminalPanel.cpp】<br/>Construct :114 —— 构建控件树<br/>AppendLine :309 · PopOldestOutputLine :1078 行池化<br/>OnPreviewKeyDown :650 —— Esc Tab 上下键 1-9<br/>HandleTextCommitted :838 —— 回车提交单一入口<br/>UpdateCaret :978 · HandleCaretBlink :949<br/>HandleScanlineFlicker :966 · HandleUserScrolled :1044<br/>RefreshQuickBar :467 · UpdateStatusText :1052"]
+        P["【Private/Shell/Terminal/ShellTerminalPanel.cpp】<br/>Construct :114 —— 构建控件树<br/>AppendLine :309 · PopOldestOutputLine :1078 行池化<br/>OnPreviewKeyDown :650 —— Esc Tab 上下键 1-9<br/>HandleTextCommitted :838 —— 回车提交单一入口<br/>HandleScanlineFlicker :966 · HandleUserScrolled :1044<br/>RefreshQuickBar :467 · UpdateStatusText :1052"]
     end
 
     subgraph L5["⑥ 纯逻辑层 — 无 UObject 无 Slate 依赖"]
@@ -114,25 +114,22 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    ROOT["SOverlay<br/>ShellTerminalPanel.cpp :138"]
-    BG["SColorBlock 背景遮罩<br/>:143 OnMouseButtonDown 吞穿透点击"]
-    BGI["SImage CRT 背景材质<br/>:149 M_CRT_Background"]
-    VB["SVerticalBox 主布局<br/>:155"]
-    TITLE["STextBlock 标题 SHELL v0.1<br/>:161"]
-    SB["SScrollBox 输出滚动区 FillHeight 1<br/>:170 OnUserScrolled"]
-    STATUS["STextBlock 状态栏<br/>:180 UpdateStatusText :1052"]
-    LINES["STextBlock x N 输出行<br/>AppendLine :309 行池化复用"]
-    INPUTBOX["SBox 输入行 随内容滚动<br/>:200 作为 ScrollBox 最后一个 slot :284"]
-    QB["SHorizontalBox 快捷指令 chip 栏<br/>:209 RefreshQuickBar :467 每页 9 条"]
-    PROMPTROW["SHorizontalBox 提示符 + 输入<br/>:216"]
-    PT["STextBlock 提示符<br/>:222 BuildDynamicPromptLabel"]
-    IO["SOverlay 输入叠层<br/>:233"]
-    ET["SEditableText 输入框<br/>:236 OnTextCommitted 到 HandleTextCommitted :838"]
-    CH["SBox CaretOffsetHost 宽度=测量文本宽 HAlign Right<br/>:255 UpdateCaret :978"]
-    CB["SBox CaretBlock 内嵌 SColorBlock 方块光标<br/>:259 宽=测 W 高=测 中"]
-    SUG["STextBlock 补全建议<br/>:276 Tab 多候选时显示"]
-    SCAN["SImage 扫描线 4x4 平铺 HitTestInvisible<br/>:187 HandleScanlineFlicker :966"]
-    VIG["SImage CRT 暗角 HitTestInvisible<br/>:194 M_CRT_Vignette"]
+    ROOT["SOverlay<br/>ShellTerminalPanel.cpp :139"]
+    BG["SColorBlock 背景遮罩<br/>:142 OnMouseButtonDown 吞穿透点击"]
+    BGI["SImage CRT 背景材质<br/>:148 M_CRT_Background"]
+    VB["SVerticalBox 主布局<br/>:154"]
+    TITLE["STextBlock 标题 SHELL v0.1<br/>:160"]
+    SB["SScrollBox 输出滚动区 FillHeight 1<br/>:169 OnUserScrolled"]
+    STATUS["STextBlock 状态栏<br/>:179 UpdateStatusText :921"]
+    LINES["STextBlock x N 输出行<br/>AppendLine :279 行池化复用"]
+    INPUTBOX["SBox 输入行 随内容滚动<br/>:200 作为 ScrollBox 最后一个 slot :257"]
+    QB["SHorizontalBox 快捷指令 chip 栏<br/>:208 RefreshQuickBar :434 每页 9 条"]
+    PROMPTROW["SHorizontalBox 提示符 + 输入<br/>:215"]
+    PT["STextBlock 提示符<br/>:221 BuildDynamicPromptLabel"]
+    ET["SEditableText 输入框<br/>:232 OnTextCommitted 到 HandleTextCommitted :798<br/>光标 = 原生竖线 caret（方块光标已于 2026-09-01 移除）"]
+    SUG["STextBlock 补全建议<br/>:247 Tab 多候选时显示"]
+    SCAN["SImage 扫描线 4x4 平铺 HitTestInvisible<br/>:186 HandleScanlineFlicker :901"]
+    VIG["SImage CRT 暗角 HitTestInvisible<br/>:193 M_CRT_Vignette"]
 
     ROOT --> BG
     ROOT --> BGI
@@ -148,10 +145,7 @@ flowchart TD
     INPUTBOX --> PROMPTROW
     INPUTBOX --> SUG
     PROMPTROW --> PT
-    PROMPTROW --> IO
-    IO --> ET
-    IO --> CH
-    CH --> CB
+    PROMPTROW --> ET
 ```
 
 > 注意：输入行是 `SScrollBox` 的**最后一个 slot**，不是独立固定行。
@@ -170,10 +164,10 @@ flowchart LR
         A4 --> A5["改用 SScrollBox + 行池化<br/>PopOldestOutputLine :1078"]
     end
 
-    subgraph D2["方块光标必须自制"]
-        B1["SEditableText 自带竖线 caret"] --> B2["不像终端观感"]
-        B2 --> B3["双层 SBox 叠在 SOverlay 上<br/>:255 与 :259"]
-        B3 --> B4["FSlateFontMeasure 测文本宽<br/>UpdateCaret :978"]
+    subgraph D2["方块光标已移除（2026-09-01）"]
+        B1["早期版本自制块状光标<br/>双层 SBox + SColorBlock"] --> B2["遮挡字形 与标准输入 UX 不符"]
+        B2 --> B3["删除 CaretOffsetHost / CaretBlock<br/>与 UpdateCaret 等 5 个函数"]
+        B3 --> B4["回退 SEditableText 原生竖线光标<br/>自带闪烁与失焦隐藏"]
     end
 
     subgraph D3["UE5.8 构建时机"]
@@ -233,32 +227,30 @@ flowchart LR
 | `HandleShellOutput` | `ShellTerminalWidget.cpp:133` |
 | `GetFocusTarget` | `ShellTerminalWidget.cpp:143` |
 
-### Slate 面板（渲染核心，1108 行）
+### Slate 面板（渲染核心，981 行）
 
 | 函数 | 文件:行 |
 | --- | --- |
-| `Construct` | `ShellTerminalPanel.cpp:114` |
-| `AppendLine` | `ShellTerminalPanel.cpp:309` |
-| `ClearLines` | `ShellTerminalPanel.cpp:366` |
-| `SetPrompt` | `ShellTerminalPanel.cpp:381` |
-| `ClearPrompt` | `ShellTerminalPanel.cpp:413` |
-| `SubmitLine` | `ShellTerminalPanel.cpp:441` |
-| `SetInputLine` | `ShellTerminalPanel.cpp:453` |
-| `RefreshQuickBar` | `ShellTerminalPanel.cpp:467` |
-| `HandleQuickBarPageDelta` | `ShellTerminalPanel.cpp:563` |
-| `HandleQuickCommandClicked` | `ShellTerminalPanel.cpp:581` |
-| `HandleQuickCommandKey` | `ShellTerminalPanel.cpp:605` |
-| `FocusInput` | `ShellTerminalPanel.cpp:626` |
-| `GetFocusTarget` | `ShellTerminalPanel.cpp:644` |
-| `OnPreviewKeyDown` | `ShellTerminalPanel.cpp:650` |
-| `HandleTextCommitted` | `ShellTerminalPanel.cpp:838` |
-| `HandleDeferredFocus` | `ShellTerminalPanel.cpp:927` |
-| `HandleCaretBlink` | `ShellTerminalPanel.cpp:949` |
-| `HandleScanlineFlicker` | `ShellTerminalPanel.cpp:966` |
-| `UpdateCaret` | `ShellTerminalPanel.cpp:978` |
-| `HandleUserScrolled` | `ShellTerminalPanel.cpp:1044` |
-| `UpdateStatusText` | `ShellTerminalPanel.cpp:1052` |
-| `PopOldestOutputLine` | `ShellTerminalPanel.cpp:1078` |
+| `Construct` | `ShellTerminalPanel.cpp:113` |
+| `AppendLine` | `ShellTerminalPanel.cpp:279` |
+| `ClearLines` | `ShellTerminalPanel.cpp:336` |
+| `SetPrompt` | `ShellTerminalPanel.cpp:351` |
+| `ClearPrompt` | `ShellTerminalPanel.cpp:382` |
+| `SubmitLine` | `ShellTerminalPanel.cpp:409` |
+| `SetInputLine` | `ShellTerminalPanel.cpp:421` |
+| `RefreshQuickBar` | `ShellTerminalPanel.cpp:434` |
+| `HandleQuickBarPageDelta` | `ShellTerminalPanel.cpp:530` |
+| `HandleQuickCommandClicked` | `ShellTerminalPanel.cpp:548` |
+| `HandleQuickCommandKey` | `ShellTerminalPanel.cpp:572` |
+| `FocusInput` | `ShellTerminalPanel.cpp:593` |
+| `GetFocusTarget` | `ShellTerminalPanel.cpp:611` |
+| `OnPreviewKeyDown` | `ShellTerminalPanel.cpp:617` |
+| `HandleTextCommitted` | `ShellTerminalPanel.cpp:798` |
+| `HandleDeferredFocus` | `ShellTerminalPanel.cpp:885` |
+| `HandleScanlineFlicker` | `ShellTerminalPanel.cpp:901` |
+| `HandleUserScrolled` | `ShellTerminalPanel.cpp:913` |
+| `UpdateStatusText` | `ShellTerminalPanel.cpp:921` |
+| `PopOldestOutputLine` | `ShellTerminalPanel.cpp:947` |
 
 ### 纯逻辑 / 样式 / 字体
 
