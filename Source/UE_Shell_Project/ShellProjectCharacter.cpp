@@ -57,9 +57,9 @@ AShellProjectCharacter::AShellProjectCharacter()
 	ShellScreen = CreateDefaultSubobject<UWidgetComponent>(TEXT("ShellScreen"));
     ShellScreen->SetupAttachment(FollowCamera);
 	ShellScreen->SetWidgetClass(UShellTerminalWidget::StaticClass());
-	ShellScreen->SetDrawSize(FVector2D(128.f, 80.f));
+	ShellScreen->SetDrawSize(FVector2D(1280.f, 800.f));
 	ShellScreen->SetRelativeLocation(FVector(70.f, -40.f, -15.f));
-	ShellScreen->SetRelativeScale3D(FVector(0.5f));
+	ShellScreen->SetRelativeScale3D(FVector(0.05f));
 	ShellScreen->SetVisibility(false); // 初始隐藏
 	ShellScreen->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ShellScreen->SetGenerateOverlapEvents(false);
