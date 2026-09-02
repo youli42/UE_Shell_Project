@@ -15,10 +15,10 @@
 
 namespace
 {
-	/** 下一个呈现状态（0 -> 1 -> 2 -> 0）。 */
+	/** 下一个呈现状态（0 -> 1 -> 2 -> 3 -> 0）。 */
 	EShellPresentationState NextPresentationState(EShellPresentationState InState)
 	{
-		return static_cast<EShellPresentationState>((static_cast<uint8>(InState) + 1) % 3);
+		return static_cast<EShellPresentationState>((static_cast<uint8>(InState) + 1) % 4);
 	}
 }
 
@@ -92,7 +92,7 @@ void AShellProjectPlayerController::CycleShellPresentation()
 
 void AShellProjectPlayerController::SetShellPresentationState(int32 InState)
 {
-	const int32 Clamped = FMath::Clamp(InState, 0, 2);
+	const int32 Clamped = FMath::Clamp(InState, 0, 3);
 	PresentationState = static_cast<EShellPresentationState>(Clamped);
 	ApplyShellPresentation();
 }
@@ -177,7 +177,6 @@ void AShellProjectPlayerController::ApplyShellPresentation()
 		break;
 	}
 	case EShellPresentationState::HeldInHand:
-	default:
 	{
 		// 倾斜如拿在手里：显示世界 WidgetComponent 实例（角色 Tick 内面向相机 billboard）。
 		Hud->SetVisibility(ESlateVisibility::Collapsed);
@@ -187,5 +186,39 @@ void AShellProjectPlayerController::ApplyShellPresentation()
 		}
 		break;
 	}
+	case EShellPresentationState::InputWindow:
+	{
+		// 居中大窗口 + 可输入：取消缩小/下沉，居中铺 80%，切换输入模式让玩家打字。
+		Hud->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+		Hud->SetRenderScale(FVector2D(0.8f, 0.8f));
+		Hud->SetRenderTranslation(FVector2D::ZeroVector);
+		Hud->SetVisibility(ESlateVisibility::Visible);
+		if (WorldScreen)
+		{
+			WorldScreen->SetVisibility(false);
+		}
+		break;
+	}
+	default:
+	{
+		break;
+	}
+	}
+
+	// 仅 InputWindow 切 UIOnly（可输入）；其余呈现态保持 GameOnly（默认控制视角）。
+	if (PresentationState == EShellPresentationState::InputWindow)
+	{
+		FInputModeUIOnly InputMode;
+		if (Hud)
+		{
+			InputMode.SetWidgetToFocus(Hud->GetFocusTarget().ToSharedPtr());
+		}
+		SetInputMode(InputMode);
+		SetShowMouseCursor(true);
+	}
+	else
+	{
+		SetInputMode(FInputModeGameOnly());
+		SetShowMouseCursor(false);
 	}
 }

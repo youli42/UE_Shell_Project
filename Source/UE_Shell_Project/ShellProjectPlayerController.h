@@ -13,10 +13,11 @@ class UShellTerminalWidget;
 /**
  * 双实例-演示用的 shell 呈现状态（T12 前缀）。
  *
- * Tab 在三态间循环切换，观察"左下角屏幕"的三种观感：
+ * Tab 在四态间循环切换：
  *  - Shrink         缩小显示画面（HUD 视口实例，锚左下角）
  *  - ShrinkOccluded 缩小且下半部分被遮挡（HUD 实例下沉到屏幕边缘/底槽）
  *  - HeldInHand     倾斜如同拿在手里（世界 WidgetComponent 实例，面向相机）
+ *  - InputWindow    居中大窗口 + 可输入（切到 UIOnly，焦点给终端输入框）
  */
 UENUM(BlueprintType)
 enum class EShellPresentationState : uint8
@@ -24,6 +25,7 @@ enum class EShellPresentationState : uint8
 	Shrink          UMETA(DisplayName = "Shrink"),
 	ShrinkOccluded  UMETA(DisplayName = "Shrink + Occluded"),
 	HeldInHand      UMETA(DisplayName = "Held In Hand"),
+	InputWindow     UMETA(DisplayName = "Input Window"),
 };
 
 /**
