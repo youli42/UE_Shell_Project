@@ -55,10 +55,10 @@ AShellProjectCharacter::AShellProjectCharacter()
 	// 双实例-世界实例："手持屏幕"。挂角色根，默认隐藏（仅 HeldInHand 态显示）。
 	// DrawSize 固定为渲染分辨率（不随内容自适应）；世界缩放拉近到可读尺寸。
 	ShellScreen = CreateDefaultSubobject<UWidgetComponent>(TEXT("ShellScreen"));
-	ShellScreen->SetupAttachment(RootComponent);
+    ShellScreen->SetupAttachment(FollowCamera);
 	ShellScreen->SetWidgetClass(UShellTerminalWidget::StaticClass());
-	ShellScreen->SetDrawSize(FVector2D(1280.f, 800.f));
-	ShellScreen->SetRelativeLocation(FVector(70.f, 0.f, -15.f));
+	ShellScreen->SetDrawSize(FVector2D(128.f, 80.f));
+	ShellScreen->SetRelativeLocation(FVector(70.f, -40.f, -15.f));
 	ShellScreen->SetRelativeScale3D(FVector(0.5f));
 	ShellScreen->SetVisibility(false); // 初始隐藏
 	ShellScreen->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -88,14 +88,9 @@ void AShellProjectCharacter::UpdateShellScreenBillboard()
 	}
 
 	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
-	AActor* CameraPawn = PC ? PC->GetPawn() : nullptr;
-	if (!CameraPawn)
-	{
-		return;
-	}
 
 	// 以玩家视角为相机参考（此处用 Pawn 位置近似，避免对玩家屏蔽遮挡）。
-	const FVector CameraLoc = CameraPawn->GetActorLocation();
+    const FVector CameraLoc = FollowCamera->GetComponentLocation(); // 面板朝向相机
 	const FVector WidgetLoc = ShellScreen->GetComponentLocation();
 
 	// billboard：让组件 +X 由屏幕指向相机（面板正面朝玩家）。
