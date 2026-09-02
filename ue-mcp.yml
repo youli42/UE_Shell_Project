@@ -4,7 +4,6 @@ ue-mcp:
     - niagara
     - pcg
     - audio
-    - gameplay
     - networking
     - demo
   contentRoots:
