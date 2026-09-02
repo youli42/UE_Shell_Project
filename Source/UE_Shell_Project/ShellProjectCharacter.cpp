@@ -6,6 +6,7 @@
 #include "Components/InputComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/WidgetComponent.h"
+#include "Components/WidgetInteractionComponent.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/StaticMesh.h"
 #include "EnhancedInputComponent.h"
@@ -58,12 +59,19 @@ AShellProjectCharacter::AShellProjectCharacter()
     ShellScreen->SetupAttachment(FollowCamera);
 	ShellScreen->SetWidgetClass(UShellTerminalWidget::StaticClass());
 	ShellScreen->SetDrawSize(FVector2D(1280.f, 800.f));
-	ShellScreen->SetRelativeLocation(FVector(70.f, -40.f, -15.f));
-	ShellScreen->SetRelativeScale3D(FVector(0.05f));
+	// 初始姿态 = Front（面前）：近/居中/大；Tick 内插值到目标姿态。
+	ShellScreen->SetRelativeLocation(FVector(78.f, 0.f, -12.f));
+	ShellScreen->SetRelativeScale3D(FVector(0.075f));
 	ShellScreen->SetVisibility(false); // 初始隐藏
 	ShellScreen->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ShellScreen->SetGenerateOverlapEvents(false);
 	ShellScreen->SetTwoSided(true);
+
+	// 世界交互组件：前置态时可点击（快捷施法按钮/输入框）。
+	ShellInteraction = CreateDefaultSubobject<UWidgetInteractionComponent>(TEXT("ShellInteraction"));
+	ShellInteraction->SetupAttachment(RootComponent);
+	ShellInteraction->InteractionSource = EWidgetInteractionSource::Mouse;
+	ShellInteraction->bShowDebug = false;
 
 	// 输入动作 + IMC 在运行时惰性构建（构造器内 NewObject 会触发
 	// UObjectGlobals.cpp:4880 致命错误——见 EnsureInputBuilt）。
@@ -77,7 +85,43 @@ UShellTerminalWidget* AShellProjectCharacter::GetShellScreenWidget() const
 void AShellProjectCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	InterpShellScreenToPose(DeltaSeconds);
 	UpdateShellScreenBillboard();
+}
+
+void AShellProjectCharacter::SetShellScreenPose(EShellScreenPose InPose)
+{
+	ShellPose = InPose;
+}
+
+void AShellProjectCharacter::InterpShellScreenToPose(float DeltaSeconds)
+{
+	if (!ShellScreen)
+	{
+		return;
+	}
+
+	// 目标姿态（相对相机局部）：Front 近/居中/大，Hand 前/左/下/小。
+	// 默认值取"在视野内"的合理值，可后续微调。
+	FVector TargetLoc;
+	FVector TargetScale;
+	if (ShellPose == EShellScreenPose::Front)
+	{
+		TargetLoc   = FVector(78.f, 0.f, -12.f);
+		TargetScale = FVector(0.075f);
+	}
+	else
+	{
+		TargetLoc   = FVector(62.f, -26.f, -42.f);
+		TargetScale = FVector(0.055f);
+	}
+
+	// 平滑插值（速度 ~8/s）。
+	const float Speed = 8.f;
+	const FVector NewLoc   = FMath::VInterpTo(ShellScreen->GetRelativeLocation(), TargetLoc, DeltaSeconds, Speed);
+	const FVector NewScale = FMath::VInterpTo(ShellScreen->GetRelativeScale3D(), TargetScale, DeltaSeconds, Speed);
+	ShellScreen->SetRelativeLocation(NewLoc);
+	ShellScreen->SetRelativeScale3D(NewScale);
 }
 
 void AShellProjectCharacter::UpdateShellScreenBillboard()
@@ -175,6 +219,27 @@ void AShellProjectCharacter::SetupPlayerInputComponent(UInputComponent* PlayerIn
 		EnhancedInput->BindAction(JumpAction, ETriggerEvent::Started, this, &AShellProjectCharacter::HandleJump);
 		EnhancedInput->BindAction(JumpAction, ETriggerEvent::Completed, this, &AShellProjectCharacter::HandleJumpReleased);
 	}
+	if (InteractAction)
+	{
+		EnhancedInput->BindAction(InteractAction, ETriggerEvent::Started, this, &AShellProjectCharacter::HandleShellInteractStart);
+		EnhancedInput->BindAction(InteractAction, ETriggerEvent::Completed, this, &AShellProjectCharacter::HandleShellInteractStop);
+	}
+}
+
+void AShellProjectCharacter::HandleShellInteractStart(const FInputActionValue& Value)
+{
+	if (ShellInteraction)
+	{
+		ShellInteraction->PressPointerKey(EKeys::LeftMouseButton);
+	}
+}
+
+void AShellProjectCharacter::HandleShellInteractStop(const FInputActionValue& Value)
+{
+	if (ShellInteraction)
+	{
+		ShellInteraction->ReleasePointerKey(EKeys::LeftMouseButton);
+	}
 }
 
 void AShellProjectCharacter::EnsureInputBuilt()
@@ -193,6 +258,8 @@ void AShellProjectCharacter::EnsureInputBuilt()
 	LookAction->ValueType = EInputActionValueType::Axis2D;
 	JumpAction = NewObject<UInputAction>(this, TEXT("JumpAction"));
 	JumpAction->ValueType = EInputActionValueType::Boolean;
+	InteractAction = NewObject<UInputAction>(this, TEXT("InteractAction"));
+	InteractAction->ValueType = EInputActionValueType::Boolean;
 
 	CharacterMappingContext = NewObject<UInputMappingContext>(this, TEXT("CharacterMappingContext"));
 	CharacterMappingContext->MapKey(MoveForwardAction, EKeys::W);                 // 前
@@ -203,6 +270,7 @@ void AShellProjectCharacter::EnsureInputBuilt()
 	AMapping.Modifiers.Add(NewObject<UInputModifierNegate>(this));                 // 左
 	CharacterMappingContext->MapKey(LookAction, EKeys::Mouse2D);                  // 视角
 	CharacterMappingContext->MapKey(JumpAction, EKeys::SpaceBar);                 // 跳
+	CharacterMappingContext->MapKey(InteractAction, EKeys::LeftMouseButton);      // 点击世界屏幕
 }
 
 void AShellProjectCharacter::BuildAndAddCharacterInputMapping()
@@ -232,6 +300,12 @@ void AShellProjectCharacter::BuildAndAddCharacterInputMapping()
 
 void AShellProjectCharacter::MoveForward(const FInputActionValue& Value)
 {
+	// 面前输入模式：忽略 WASD，避免被移动捕获；把键盘让给 UI 交互。
+	if (bShellInputActive)
+	{
+		return;
+	}
+
 	const float Axis = Value.Get<float>();
 
 	AController* PC = GetController();
@@ -248,6 +322,12 @@ void AShellProjectCharacter::MoveForward(const FInputActionValue& Value)
 
 void AShellProjectCharacter::MoveRight(const FInputActionValue& Value)
 {
+	// 面前输入模式：忽略 A/D，避免被移动捕获。
+	if (bShellInputActive)
+	{
+		return;
+	}
+
 	const float Axis = Value.Get<float>();
 
 	AController* PC = GetController();
@@ -264,6 +344,12 @@ void AShellProjectCharacter::MoveRight(const FInputActionValue& Value)
 
 void AShellProjectCharacter::Look(const FInputActionValue& Value)
 {
+	// 面前输入模式：忽略鼠标视角，避免点击被视角捕获；把鼠标让给 UI 交互。
+	if (bShellInputActive)
+	{
+		return;
+	}
+
 	const FVector2D Axis = Value.Get<FVector2D>();
 
 	AddControllerYawInput(Axis.X);
