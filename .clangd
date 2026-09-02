@@ -1,0 +1,21 @@
+# clangd configuration for UE 5.8 (UE_Shell_Project)
+#
+# compile_commands.json lives at the project root and is regenerated from UnrealBuildTool:
+#   "C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" UE_Shell_ProjectEditor Win64 Development -Project="E:\E_SATA_WP\UE\UE_Shell_Project\UE_Shell_Project.uproject" -Mode=GenerateClangDatabase
+# The generated DB is machine-specific, so it is intentionally NOT committed to source control.
+
+CompileFlags:
+  # Directory that contains compile_commands.json (relative to this file = project root).
+  # clangd would also auto-walk up to find it, but being explicit is more reliable.
+  CompilationDatabase: .
+  Add:
+    # UBT emits clang-cl.exe commands; force MSVC-style arg parsing regardless of which
+    # clang driver clangd internally uses.
+    - --driver-mode=cl
+    # Background index the whole tree so cross-file navigation works without a warm-up wait.
+    - --background-index
+  Remove:
+    # UBT's clang action graph sometimes carries -fsyntax-only on IntelliSense-style rsp
+    # files, which would make clangd no-op instead of producing diagnostics.
+    - -fsyntax-only
+    - /fsyntax-only

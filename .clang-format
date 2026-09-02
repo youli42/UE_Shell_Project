@@ -1,0 +1,28 @@
+# .clang-format for UE 5.8, aligned with Unreal's formatting conventions.
+# Minimal but faithful: BasedOnStyle is off so every rule below is explicit.
+Language: Cpp
+BasedOnStyle: LLVM
+Standard: c++20
+IndentWidth: 4
+UseTab: Never
+ColumnLimit: 120
+AccessModifierOffset: -4
+NamespaceIndentation: None
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+DerivePointerAlignment: false
+BreakBeforeBraces: Allman
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBinaryOperators: NonAssignment
+ContinuationIndentWidth: 4
+IncludeBlocks: Preserve
+SortIncludes: Never
+MaxEmptyLinesToKeep: 1
+SpaceBeforeParens: ControlStatements
+SpaceAfterCStyleCast: false
+Cpp11BracedListStyle: true
+BinPackArguments: true
+BinPackParameters: true
+ReflowComments: false
