@@ -56,6 +56,16 @@ void AShellProjectPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// 订阅终端面板捕获的宿主流控键（HostOwned 范式）：面板持有键盘焦点时
+	// Tab/ESC 经此到达（不依赖游戏输入管道，PIE 内外行为一致）。
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UShellSubsystem* Shell = GI->GetSubsystem<UShellSubsystem>())
+		{
+			Shell->OnHostFlowKey.AddUniqueDynamic(this, &AShellProjectPlayerController::HandleHostFlowKey);
+		}
+	}
+
 	if (ULocalPlayer* LocalPlayer = GetLocalPlayer())
 	{
 		if (UEnhancedInputLocalPlayerSubsystem* InputSubsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer))
@@ -108,6 +118,18 @@ void AShellProjectPlayerController::HandleTerminalToggle()
 	// 菜单（登录）场景：世界面片终端（AShellWorldScreenActor）是唯一登录入口，
 	// 不再弹出全屏 HUD 终端（旧登录方式残留，会与世界屏叠加显示）。
 	UE_LOG(LogTemp, Verbose, TEXT("[ShellProject] 菜单场景 Tab 已禁用（世界屏为唯一登录入口）"));
+}
+
+void AShellProjectPlayerController::HandleHostFlowKey(FName KeyName)
+{
+	if (KeyName == EKeys::Tab.GetFName())
+	{
+		HandleTerminalToggle();
+	}
+	else if (KeyName == EKeys::Escape.GetFName())
+	{
+		HandleEscapeUI();
+	}
 }
 
 void AShellProjectPlayerController::HandleEscapeUI()

@@ -82,6 +82,11 @@ private:
 	/** HostOwned 流控键范式下的 ESC：退出输入接管态（InputWindow → Shrink）。 */
 	void HandleEscapeUI();
 
+	/** 终端面板捕获的宿主流控键（HostOwned 范式）：Tab=循环呈现态、ESC=退出输入态。
+	 *  仅在面板持有键盘焦点（InputWindow 态）时到达；非 UI 态走 IMC_Shell 游戏输入管道，两路互补。 */
+	UFUNCTION()
+	void HandleHostFlowKey(FName KeyName);
+
 	/** 把当前状态落到各实例：显示/隐藏、缩放/平移、输入接管。 */
 	void ApplyShellPresentation();
 
