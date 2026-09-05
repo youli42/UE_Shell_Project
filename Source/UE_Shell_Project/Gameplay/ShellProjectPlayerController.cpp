@@ -41,6 +41,15 @@ void AShellProjectPlayerController::SetupInputComponent()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[ShellProject] IA_TerminalToggle 加载失败，Tab 终端开关未绑定"));
 	}
+
+	// ESC 流控（HostOwned 范式）：终端面板不消费 ESC（EShellFlowKeyMode），
+	// 由本控制器统一处理。IA/IMC 运行时惰性构建（构造器内 NewObject 会崩溃，
+	// 与角色/世界屏的运行时构建模式一致），映射挂到本地玩家子系统（BeginPlay）。
+	EscapeUIAction = NewObject<UInputAction>(this, TEXT("ShellEscapeUIAction"));
+	EscapeUIAction->ValueType = EInputActionValueType::Boolean;
+	EscapeMappingContext = NewObject<UInputMappingContext>(this, TEXT("ShellEscapeMappingContext"));
+	EscapeMappingContext->MapKey(EscapeUIAction, EKeys::Escape);
+	EnhancedInput->BindAction(EscapeUIAction, ETriggerEvent::Started, this, &AShellProjectPlayerController::HandleEscapeUI);
 }
 
 void AShellProjectPlayerController::BeginPlay()
@@ -58,6 +67,12 @@ void AShellProjectPlayerController::BeginPlay()
 			else
 			{
 				UE_LOG(LogTemp, Warning, TEXT("[ShellProject] IMC_Shell 加载失败，终端输入映射未挂载"));
+			}
+
+			if (EscapeMappingContext)
+			{
+				// 优先级 0：与 IMC_Shell 并存（不同动作，互不冲突）。
+				InputSubsystem->AddMappingContext(EscapeMappingContext, 0);
 			}
 		}
 	}
@@ -93,6 +108,18 @@ void AShellProjectPlayerController::HandleTerminalToggle()
 	// 菜单（登录）场景：世界面片终端（AShellWorldScreenActor）是唯一登录入口，
 	// 不再弹出全屏 HUD 终端（旧登录方式残留，会与世界屏叠加显示）。
 	UE_LOG(LogTemp, Verbose, TEXT("[ShellProject] 菜单场景 Tab 已禁用（世界屏为唯一登录入口）"));
+}
+
+void AShellProjectPlayerController::HandleEscapeUI()
+{
+	// HostOwned 流控键范式：ESC = 退出输入接管态。
+	// 仅 InputWindow 态有"UI 输入态"可退（回默认 Shrink：世界屏隐藏输入接管、
+	// 恢复 GameOnly + 光标隐藏，由 ApplyShellPresentation 统一落地）；
+	// 其余状态无 UI 输入态，忽略。
+	if (PresentationState == EShellPresentationState::InputWindow)
+	{
+		SetShellPresentationState(static_cast<int32>(EShellPresentationState::Shrink));
+	}
 }
 
 void AShellProjectPlayerController::CycleShellPresentation()

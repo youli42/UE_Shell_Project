@@ -79,6 +79,9 @@ protected:
 private:
 	void HandleTerminalToggle();
 
+	/** HostOwned 流控键范式下的 ESC：退出输入接管态（InputWindow → Shrink）。 */
+	void HandleEscapeUI();
+
 	/** 把当前状态落到各实例：显示/隐藏、缩放/平移、输入接管。 */
 	void ApplyShellPresentation();
 
@@ -97,6 +100,18 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Shell|Input")
 	TSoftObjectPtr<UInputMappingContext> ShellMappingContext = TSoftObjectPtr<UInputMappingContext>(
 		FSoftObjectPath(TEXT("/Shell_UE/Shell/Input/IMC_Shell.IMC_Shell")));
+
+	/**
+	 * ESC 流控动作（运行时构建，UPROPERTY 防 GC）。
+	 * HostOwned 范式下终端面板不消费 ESC（EShellFlowKeyMode），由本控制器
+	 * 统一处理：InputWindow 态退出回默认呈现；其余态忽略。
+	 */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> EscapeUIAction;
+
+	/** ESC 流控映射上下文（运行时构建，与 IMC_Shell(0) 并存）。 */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputMappingContext> EscapeMappingContext;
 
 	/** 双实例-HUD 实例：视口底左的终端（RenderTransform 做缩小/下沉）。 */
 	UPROPERTY(Transient)
