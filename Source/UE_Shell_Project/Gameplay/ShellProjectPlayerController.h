@@ -2,13 +2,14 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "UObject/SoftObjectPtr.h"
 
 #include "ShellProjectPlayerController.generated.h"
 
 class UInputAction;
 class UInputMappingContext;
-class UWidgetComponent;
 class UShellTerminalWidget;
+class UShellWorldScreen;
 
 /**
  * 双实例-演示用的 shell 呈现状态（T12 前缀）。
@@ -62,6 +63,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Shell Presentation")
 	void SetShellPresentationState(int32 InState);
 
+	/**
+	 * 输入模式/光标策略的唯一入口（所有场景统一由本控制器拥有）：
+	 *  - true  GameAndUI + 显示光标，且按住左键不隐藏光标/不捕获视口
+	 *         （世界面片上的点击体验与普通 UI 一致）。
+	 *  - false GameOnly + 隐藏光标（纯游戏输入）。
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Shell Presentation")
+	void SetShellUIFocus(bool bUIFocused);
+
 protected:
 	/** 持有角色后自动应用默认呈现态（Shrink，左下角常显）。 */
 	virtual void OnPossess(APawn* InPawn) override;
@@ -69,20 +79,24 @@ protected:
 private:
 	void HandleTerminalToggle();
 
-	/** 把当前状态落到各实例：显示/隐藏、缩放/平移、billboard。 */
+	/** 把当前状态落到各实例：显示/隐藏、缩放/平移、输入接管。 */
 	void ApplyShellPresentation();
 
 	/** 惰性创建 HUD 视口实例（同一个 UShellSubsystem 输出的双实例之一）。 */
 	UShellTerminalWidget* EnsureHudShellWidget();
 
-	/** 当前 Pawn 若无 ShellScreen 世界组件则返回 null（菜单/非角色场景）。 */
-	UWidgetComponent* GetShellScreenComponentOrNull() const;
+	/** 当前 Pawn 若无世界屏组件则返回 null（菜单/非角色场景）。 */
+	UShellWorldScreen* GetWorldScreenOrNull() const;
 
-	UPROPERTY(Transient)
-	TObjectPtr<UInputMappingContext> ShellMappingContext;
+	/** Tab 终端开关动作（插件资产；软引用，可由蓝图/编辑器替换绑定）。 */
+	UPROPERTY(EditAnywhere, Category = "Shell|Input")
+	TSoftObjectPtr<UInputAction> TerminalToggleAction = TSoftObjectPtr<UInputAction>(
+		FSoftObjectPath(TEXT("/Shell_UE/Shell/Input/IA_TerminalToggle.IA_TerminalToggle")));
 
-	UPROPERTY(Transient)
-	TObjectPtr<UInputAction> TerminalToggleAction;
+	/** 插件终端输入映射（软引用，可替换）。 */
+	UPROPERTY(EditAnywhere, Category = "Shell|Input")
+	TSoftObjectPtr<UInputMappingContext> ShellMappingContext = TSoftObjectPtr<UInputMappingContext>(
+		FSoftObjectPath(TEXT("/Shell_UE/Shell/Input/IMC_Shell.IMC_Shell")));
 
 	/** 双实例-HUD 实例：视口底左的终端（RenderTransform 做缩小/下沉）。 */
 	UPROPERTY(Transient)

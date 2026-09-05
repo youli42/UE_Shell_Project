@@ -10,7 +10,6 @@
 #include "TimerManager.h"
 
 #include "ShellProjectCharacter.h"
-#include "ShellProjectMenuPawn.h"
 #include "ShellProjectPlayerController.h"
 #include "ShellProjectPlayerState.h"
 
@@ -58,8 +57,6 @@ void AShellGameplayGameMode::ValidateSessionAndSetupHUD()
 		SessionHUD->AddToViewport(10);
 	}
 
-	// 登录流程结束时终端已关闭；此处确保游戏输入模式。
-	FInputModeGameOnly GameOnly;
-	PC->SetInputMode(GameOnly);
-	PC->SetShowMouseCursor(false);
+	// 输入模式/光标策略统一由 AShellProjectPlayerController 拥有：
+	// OnPossess → ApplyShellPresentation（默认 Shrink 态）即 GameOnly + 隐藏光标。
 }

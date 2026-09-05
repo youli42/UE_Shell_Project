@@ -8,11 +8,16 @@
 #include "ShellWorldScreen.generated.h"
 
 class UShellTerminalWidget;
+class UEnhancedInputComponent;
+class UInputAction;
+class UInputMappingContext;
 class UStaticMesh;
 class UStaticMeshComponent;
 class UUserWidget;
 class UWidgetComponent;
 class UWidgetInteractionComponent;
+class SWidget;
+struct FInputActionValue;
 
 /**
  * 可复用的"世界终端屏幕"组件（R1）。
@@ -28,7 +33,8 @@ class UWidgetInteractionComponent;
  *  - FocusTerminal  聚焦终端 SEditableText（打字）
  *  - Click          世界交互组件 Press/Release
  *  - ScrollWheel    滚轮滚动
- *  - SetInputActive 输入接管标志（true 时角色忽略移动/视角）
+ *  - SetInputActive 输入接管：true 时绑定左键/滚轮转发（像 UI 一样可点击/滚动），
+ *                   并置位标志供调用方（角色）忽略移动/视角
  *
  * 两处场景共用同一套架构：
  *  - 开始界面：场景面片（固定相机 + 鼠标射线命中面片 + FocusTerminal 打字）
@@ -77,7 +83,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Shell|WorldScreen")
 	void ScrollWheel(float DeltaY);
 
-	/** 设置"输入接管"标志：true 时调用方（通常角色）应忽略移动/视角。 */
+	/**
+	 * 设置"输入接管"：
+	 *  - true  绑定左键按下/释放与滚轮到本屏幕（世界面片像 UI 一样可点击/滚动），
+	 *          并置位标志（调用方通常为角色，应忽略移动/视角）。
+	 *  - false 解除绑定（移除映射上下文，事件不再触发）。
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Shell|WorldScreen")
 	void SetInputActive(bool bActive);
 
@@ -97,7 +108,7 @@ public:
 	UWidgetComponent* GetScreenComponent() const { return ScreenComponent; }
 
 	UFUNCTION(BlueprintPure, Category = "Shell|WorldScreen")
-	UWidgetInteractionComponent* GetInteractionComponent() const { return InteractionComponent; }
+	class UShellWidgetInteractionComponent* GetInteractionComponent() const { return InteractionComponent; }
 
 	/** 面片上承载的终端 Widget（若已初始化），仅当 WidgetClass 为终端时非空。 */
 	UFUNCTION(BlueprintPure, Category = "Shell|WorldScreen")
@@ -158,6 +169,7 @@ public:
 protected:
 	virtual void OnComponentCreated() override;
 	virtual void OnRegister() override;
+	virtual void OnUnregister() override;
 
 private:
 	/** 把可配置项应用到子组件（幂等）。 */
@@ -166,11 +178,45 @@ private:
 	/** 依据 DrawSize(分辨率) 与 ScreenWidthCm/HeightCm(物理尺寸) 设置组件相对缩放。 */
 	void ApplyPhysicalSize();
 
+	// -------------------------------------------------------------------------
+	// 自包含指针输入（像 UI 一样可点击/滚动的转发链路）：
+	// 惰性构建 IA/IMC → Owner Actor EnableInput → 绑定 Press/Release/Wheel
+	// → InteractionComponent 注入 Slate 事件。激活/停用只增删映射上下文。
+	// -------------------------------------------------------------------------
+
+	/** 惰性创建点击/滚轮 IA + IMC（运行时调用，构造器内 NewObject 会崩溃）。幂等。 */
+	void EnsurePointerInputBuilt();
+
+	/** 在 Owner Actor 的增强输入组件上创建一次性绑定并挂载映射上下文。 */
+	bool BindPointerInput();
+
+	/** 绑定重试入口（定时器回调；PlayerController 未就绪时按帧重试，封顶防死循环）。 */
+	void RetryBindPointerInput();
+
+	/** 移除映射上下文（绑定保留，停用态事件不再触发）。 */
+	void UnbindPointerInput();
+
+	/**
+	 * 本屏当前是否正被指针射线命中（点击/滚轮转发与聚焦断言的统一门槛）：
+	 * 多块屏共存时，鼠标射线可能命中"别人的面片"——此时不能由本屏转发
+	 * （否则被悬停的屏会收到双份指针事件），也不应抢焦点。
+	 */
+	bool IsPointerOverSelf() const;
+
+	/** 左键按下 → Click(true)。 */
+	void HandlePointerPress(const FInputActionValue& Value);
+
+	/** 左键释放 → Click(false)。 */
+	void HandlePointerRelease(const FInputActionValue& Value);
+
+	/** 滚轮 → ScrollWheel。 */
+	void HandlePointerWheel(const FInputActionValue& Value);
+
 	UPROPERTY(VisibleAnywhere, Category = "Shell|WorldScreen|Internal")
 	TObjectPtr<UWidgetComponent> ScreenComponent;
 
 	UPROPERTY(VisibleAnywhere, Category = "Shell|WorldScreen|Internal")
-	TObjectPtr<UWidgetInteractionComponent> InteractionComponent;
+	TObjectPtr<class UShellWidgetInteractionComponent> InteractionComponent;
 
 	/** 可视化代理面片（编辑器放置预览用；运行时通常隐藏）。 */
 	UPROPERTY(VisibleAnywhere, Category = "Shell|WorldScreen|Internal")
@@ -178,4 +224,25 @@ private:
 
 	/** 输入接管标志。 */
 	bool bInputActive = false;
+
+	/** 左键点击动作（运行时构建，UPROPERTY 防 GC）。 */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> PointerClickAction;
+
+	/** 滚轮动作（运行时构建）。 */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> PointerWheelAction;
+
+	/** 指针输入映射上下文（运行时构建）。 */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputMappingContext> PointerMappingContext;
+
+	/** 一次性绑定已完成标志（重复 SetInputActive(true) 不重复绑定）。 */
+	bool bPointerInputBound = false;
+
+	/** 绑定重试计数（PC 尚未就绪的早期 SetInputActive 时按帧重试，封顶防死循环）。 */
+	int32 PointerBindRetryCount = 0;
+
+	/** 绑定重试上限（~1 秒 @60fps）。 */
+	static constexpr int32 MaxPointerBindRetries = 60;
 };

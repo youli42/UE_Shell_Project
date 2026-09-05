@@ -6,7 +6,6 @@
 #include "Components/InputComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/WidgetComponent.h"
-#include "Components/WidgetInteractionComponent.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/StaticMesh.h"
 #include "EnhancedInputComponent.h"
@@ -24,6 +23,7 @@
 
 #include "Shell/Terminal/ShellTerminalWidget.h"
 #include "ShellProjectPlayerState.h"
+#include "ShellWorldScreen.h"
 
 AShellProjectCharacter::AShellProjectCharacter()
 {
@@ -53,33 +53,33 @@ AShellProjectCharacter::AShellProjectCharacter()
 	FollowCamera->SetRelativeLocation(FVector(0.f, 0.f, 64.f));
 	FollowCamera->bUsePawnControlRotation = true;
 
-	// 双实例-世界实例："手持屏幕"。挂角色根，默认隐藏（仅 HeldInHand 态显示）。
-	// DrawSize 固定为渲染分辨率（不随内容自适应）；世界缩放拉近到可读尺寸。
-	ShellScreen = CreateDefaultSubobject<UWidgetComponent>(TEXT("ShellScreen"));
-    ShellScreen->SetupAttachment(FollowCamera);
-	ShellScreen->SetWidgetClass(UShellTerminalWidget::StaticClass());
-	ShellScreen->SetDrawSize(FVector2D(1280.f, 800.f));
-	// 初始姿态 = Front（面前）：近/居中/大；Tick 内插值到目标姿态。
-	ShellScreen->SetRelativeLocation(FVector(78.f, 0.f, -12.f));
-	ShellScreen->SetRelativeScale3D(FVector(0.075f));
-	ShellScreen->SetVisibility(false); // 初始隐藏
-	ShellScreen->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	ShellScreen->SetGenerateOverlapEvents(false);
-	ShellScreen->SetTwoSided(true);
-
-	// 世界交互组件：前置态时可点击（快捷施法按钮/输入框）。
-	ShellInteraction = CreateDefaultSubobject<UWidgetInteractionComponent>(TEXT("ShellInteraction"));
-	ShellInteraction->SetupAttachment(RootComponent);
-	ShellInteraction->InteractionSource = EWidgetInteractionSource::Mouse;
-	ShellInteraction->bShowDebug = false;
+	// 双实例-世界实例："手持屏幕"，统一走 UShellWorldScreen（显示+交互+输入接管）。
+	// 挂相机下，默认隐藏（HeldInHand/InputWindow 态显示）；DrawSize 只管清晰度，
+	// 物理尺寸由姿态动画驱动（Front 96x60 / Hand 70.4x44 cm）。
+	WorldScreen = CreateDefaultSubobject<UShellWorldScreen>(TEXT("WorldScreen"));
+	WorldScreen->SetupAttachment(FollowCamera);
+	WorldScreen->SetDrawSize(FVector2D(1280.f, 800.f));
+	WorldScreen->SetScreenPhysicalSize(96.f, 60.f);
+	WorldScreen->SetVisualProxyEnabled(false); // 第一人称手持无需编辑器预览代理
+	WorldScreen->SetScreenVisible(false);
 
 	// 输入动作 + IMC 在运行时惰性构建（构造器内 NewObject 会触发
 	// UObjectGlobals.cpp:4880 致命错误——见 EnsureInputBuilt）。
 }
 
+UWidgetComponent* AShellProjectCharacter::GetShellScreenComponent() const
+{
+	return WorldScreen ? WorldScreen->GetScreenComponent() : nullptr;
+}
+
 UShellTerminalWidget* AShellProjectCharacter::GetShellScreenWidget() const
 {
-	return ShellScreen ? Cast<UShellTerminalWidget>(ShellScreen->GetWidget()) : nullptr;
+	return WorldScreen ? WorldScreen->GetTerminalWidget() : nullptr;
+}
+
+bool AShellProjectCharacter::IsShellInputActive() const
+{
+	return WorldScreen && WorldScreen->IsInputActive();
 }
 
 void AShellProjectCharacter::Tick(float DeltaSeconds)
@@ -96,46 +96,49 @@ void AShellProjectCharacter::SetShellScreenPose(EShellScreenPose InPose)
 
 void AShellProjectCharacter::InterpShellScreenToPose(float DeltaSeconds)
 {
-	if (!ShellScreen)
+	if (!WorldScreen)
 	{
 		return;
 	}
 
-	// 目标姿态（相对相机局部）：Front 近/居中/大，Hand 前/左/下/小。
-	// 默认值取"在视野内"的合理值，可后续微调。
+	// 目标姿态（相对相机局部 + 物理尺寸）：
+	// Front 近/居中/大 96x60cm，Hand 前/左/下/小 70.4x44cm（沿用旧 scale 0.075/0.055 @1280x800）。
 	FVector TargetLoc;
-	FVector TargetScale;
+	float TargetWidthCm;
+	float TargetHeightCm;
 	if (ShellPose == EShellScreenPose::Front)
 	{
-		TargetLoc   = FVector(78.f, 0.f, -12.f);
-		TargetScale = FVector(0.075f);
+		TargetLoc      = FVector(78.f, 0.f, -12.f);
+		TargetWidthCm  = 96.f;
+		TargetHeightCm = 60.f;
 	}
 	else
 	{
-		TargetLoc   = FVector(62.f, -26.f, -42.f);
-		TargetScale = FVector(0.055f);
+		TargetLoc      = FVector(62.f, -26.f, -42.f);
+		TargetWidthCm  = 70.4f;
+		TargetHeightCm = 44.f;
 	}
 
-	// 平滑插值（速度 ~8/s）。
+	// 平滑插值（速度 ~8/s）：位置与物理尺寸（组件内部换算面片相对缩放）。
 	const float Speed = 8.f;
-	const FVector NewLoc   = FMath::VInterpTo(ShellScreen->GetRelativeLocation(), TargetLoc, DeltaSeconds, Speed);
-	const FVector NewScale = FMath::VInterpTo(ShellScreen->GetRelativeScale3D(), TargetScale, DeltaSeconds, Speed);
-	ShellScreen->SetRelativeLocation(NewLoc);
-	ShellScreen->SetRelativeScale3D(NewScale);
+	const FVector NewLoc = FMath::VInterpTo(WorldScreen->GetRelativeLocation(), TargetLoc, DeltaSeconds, Speed);
+	const float NewWidth = FMath::FInterpTo(WorldScreen->ScreenWidthCm, TargetWidthCm, DeltaSeconds, Speed);
+	const float NewHeight = FMath::FInterpTo(WorldScreen->ScreenHeightCm, TargetHeightCm, DeltaSeconds, Speed);
+	WorldScreen->SetRelativeLocation(NewLoc);
+	WorldScreen->SetScreenPhysicalSize(NewWidth, NewHeight);
 }
 
 void AShellProjectCharacter::UpdateShellScreenBillboard()
 {
-	if (!ShellScreen || !ShellScreen->IsVisible() || !ShellScreen->IsRegistered())
+	UWidgetComponent* Screen = GetShellScreenComponent();
+	if (!Screen || !Screen->IsVisible() || !Screen->IsRegistered())
 	{
 		return;
 	}
 
-	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
-
-	// 以玩家视角为相机参考（此处用 Pawn 位置近似，避免对玩家屏蔽遮挡）。
-    const FVector CameraLoc = FollowCamera->GetComponentLocation(); // 面板朝向相机
-	const FVector WidgetLoc = ShellScreen->GetComponentLocation();
+	// 以玩家视角为相机参考（面板正面朝向相机）。
+	const FVector CameraLoc = FollowCamera->GetComponentLocation();
+	const FVector WidgetLoc = Screen->GetComponentLocation();
 
 	// billboard：让组件 +X 由屏幕指向相机（面板正面朝玩家）。
 	const FVector ToCamera = CameraLoc - WidgetLoc;
@@ -145,7 +148,7 @@ void AShellProjectCharacter::UpdateShellScreenBillboard()
 	Rot.Pitch -= 8.f;
 	Rot.Roll += 6.f;
 
-	ShellScreen->SetWorldRotation(Rot);
+	Screen->SetWorldRotation(Rot);
 }
 
 void AShellProjectCharacter::PossessedBy(AController* NewController)
@@ -219,27 +222,8 @@ void AShellProjectCharacter::SetupPlayerInputComponent(UInputComponent* PlayerIn
 		EnhancedInput->BindAction(JumpAction, ETriggerEvent::Started, this, &AShellProjectCharacter::HandleJump);
 		EnhancedInput->BindAction(JumpAction, ETriggerEvent::Completed, this, &AShellProjectCharacter::HandleJumpReleased);
 	}
-	if (InteractAction)
-	{
-		EnhancedInput->BindAction(InteractAction, ETriggerEvent::Started, this, &AShellProjectCharacter::HandleShellInteractStart);
-		EnhancedInput->BindAction(InteractAction, ETriggerEvent::Completed, this, &AShellProjectCharacter::HandleShellInteractStop);
-	}
-}
-
-void AShellProjectCharacter::HandleShellInteractStart(const FInputActionValue& Value)
-{
-	if (ShellInteraction)
-	{
-		ShellInteraction->PressPointerKey(EKeys::LeftMouseButton);
-	}
-}
-
-void AShellProjectCharacter::HandleShellInteractStop(const FInputActionValue& Value)
-{
-	if (ShellInteraction)
-	{
-		ShellInteraction->ReleasePointerKey(EKeys::LeftMouseButton);
-	}
+	// 左键点击/滚轮不再在此绑定：UShellWorldScreen 自包含指针输入
+	// 由 PlayerController 的 InputWindow 态（SetInputActive）统一激活。
 }
 
 void AShellProjectCharacter::EnsureInputBuilt()
@@ -258,8 +242,6 @@ void AShellProjectCharacter::EnsureInputBuilt()
 	LookAction->ValueType = EInputActionValueType::Axis2D;
 	JumpAction = NewObject<UInputAction>(this, TEXT("JumpAction"));
 	JumpAction->ValueType = EInputActionValueType::Boolean;
-	InteractAction = NewObject<UInputAction>(this, TEXT("InteractAction"));
-	InteractAction->ValueType = EInputActionValueType::Boolean;
 
 	CharacterMappingContext = NewObject<UInputMappingContext>(this, TEXT("CharacterMappingContext"));
 	CharacterMappingContext->MapKey(MoveForwardAction, EKeys::W);                 // 前
@@ -270,7 +252,6 @@ void AShellProjectCharacter::EnsureInputBuilt()
 	AMapping.Modifiers.Add(NewObject<UInputModifierNegate>(this));                 // 左
 	CharacterMappingContext->MapKey(LookAction, EKeys::Mouse2D);                  // 视角
 	CharacterMappingContext->MapKey(JumpAction, EKeys::SpaceBar);                 // 跳
-	CharacterMappingContext->MapKey(InteractAction, EKeys::LeftMouseButton);      // 点击世界屏幕
 }
 
 void AShellProjectCharacter::BuildAndAddCharacterInputMapping()
@@ -300,8 +281,8 @@ void AShellProjectCharacter::BuildAndAddCharacterInputMapping()
 
 void AShellProjectCharacter::MoveForward(const FInputActionValue& Value)
 {
-	// 面前输入模式：忽略 WASD，避免被移动捕获；把键盘让给 UI 交互。
-	if (bShellInputActive)
+	// 输入接管（InputWindow 态）：忽略 WASD，把键盘让给 UI 交互。
+	if (IsShellInputActive())
 	{
 		return;
 	}
@@ -322,8 +303,8 @@ void AShellProjectCharacter::MoveForward(const FInputActionValue& Value)
 
 void AShellProjectCharacter::MoveRight(const FInputActionValue& Value)
 {
-	// 面前输入模式：忽略 A/D，避免被移动捕获。
-	if (bShellInputActive)
+	// 输入接管：忽略 A/D，把键盘让给 UI 交互。
+	if (IsShellInputActive())
 	{
 		return;
 	}
@@ -344,8 +325,8 @@ void AShellProjectCharacter::MoveRight(const FInputActionValue& Value)
 
 void AShellProjectCharacter::Look(const FInputActionValue& Value)
 {
-	// 面前输入模式：忽略鼠标视角，避免点击被视角捕获；把鼠标让给 UI 交互。
-	if (bShellInputActive)
+	// 输入接管：忽略鼠标视角，把鼠标让给 UI 交互（点击/滚轮）。
+	if (IsShellInputActive())
 	{
 		return;
 	}

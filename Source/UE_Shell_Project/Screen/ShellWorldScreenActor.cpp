@@ -5,6 +5,7 @@
 #include "GameFramework/PlayerController.h"
 #include "TimerManager.h"
 
+#include "ShellProjectPlayerController.h"
 #include "ShellWorldScreen.h"
 
 AShellWorldScreenActor::AShellWorldScreenActor()
@@ -76,17 +77,27 @@ void AShellWorldScreenActor::ShowLoginScreen()
 	}
 
 	WorldScreen->SetScreenVisible(true);
+	// 激活自包含指针输入：左键点击/滚轮经 InteractionComponent 注入面片上的
+	// Slate 事件（像普通 UI 一样可点可滚），同时置位输入接管标志。
+	WorldScreen->SetInputActive(true);
 	// 聚焦终端输入框，使键盘打字可用（login 流程沿用现有命令系统）。
 	WorldScreen->FocusTerminal();
 
-	// 固定相机（开始界面）下，输入交互走鼠标射线命中面片 + 聚焦打字。
-	// 切到 GameAndUI：保留鼠标点击命中面片，同时让键盘聚焦进入终端。
-	// （GameOnly 会把键盘焦点全部给 Pawn，导致打不了字。）
-	if (const UWorld* World = GetWorld())
+	// 输入模式/光标策略归 PlayerController 统一拥有：
+	// GameAndUI + 显示光标 + 按住不隐藏光标（鼠标射线命中面片可点击，
+	// 键盘焦点进终端打字；GameOnly 会把键盘焦点全部给 Pawn，导致打不了字）。
+	if (UWorld* World = GetWorld())
 	{
-		if (APlayerController* PC = World->GetFirstPlayerController())
+		if (AShellProjectPlayerController* ShellPC = Cast<AShellProjectPlayerController>(World->GetFirstPlayerController()))
 		{
-			PC->SetInputMode(FInputModeGameAndUI());
+			ShellPC->SetShellUIFocus(true);
+		}
+		else if (APlayerController* PC = World->GetFirstPlayerController())
+		{
+			// 兜底：非本工程 PC（理论上不会出现）退回原生调用。
+			FInputModeGameAndUI InputMode;
+			InputMode.SetHideCursorDuringCapture(false);
+			PC->SetInputMode(InputMode);
 			PC->SetShowMouseCursor(true);
 		}
 	}

@@ -1,11 +1,9 @@
 #include "ShellProjectPlayerController.h"
 
 #include "Blueprint/UserWidget.h"
-#include "Components/WidgetComponent.h"
 #include "Engine/GameInstance.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
-#include "Framework/Application/SlateApplication.h"
 #include "GameFramework/Pawn.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
@@ -13,6 +11,7 @@
 #include "Shell/Terminal/ShellSubsystem.h"
 #include "Shell/Terminal/ShellTerminalWidget.h"
 #include "ShellProjectCharacter.h"
+#include "ShellWorldScreen.h"
 
 namespace
 {
@@ -34,10 +33,9 @@ void AShellProjectPlayerController::SetupInputComponent()
 		return;
 	}
 
-	TerminalToggleAction = LoadObject<UInputAction>(nullptr, TEXT("/Shell_UE/Shell/Input/IA_TerminalToggle.IA_TerminalToggle"));
-	if (TerminalToggleAction)
+	if (UInputAction* LoadedToggle = TerminalToggleAction.LoadSynchronous())
 	{
-		EnhancedInput->BindAction(TerminalToggleAction, ETriggerEvent::Started, this, &AShellProjectPlayerController::HandleTerminalToggle);
+		EnhancedInput->BindAction(LoadedToggle, ETriggerEvent::Started, this, &AShellProjectPlayerController::HandleTerminalToggle);
 	}
 	else
 	{
@@ -53,10 +51,9 @@ void AShellProjectPlayerController::BeginPlay()
 	{
 		if (UEnhancedInputLocalPlayerSubsystem* InputSubsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer))
 		{
-			ShellMappingContext = LoadObject<UInputMappingContext>(nullptr, TEXT("/Shell_UE/Shell/Input/IMC_Shell.IMC_Shell"));
-			if (ShellMappingContext)
+			if (UInputMappingContext* LoadedContext = ShellMappingContext.LoadSynchronous())
 			{
-				InputSubsystem->AddMappingContext(ShellMappingContext, 0);
+				InputSubsystem->AddMappingContext(LoadedContext, 0);
 			}
 			else
 			{
@@ -66,23 +63,36 @@ void AShellProjectPlayerController::BeginPlay()
 	}
 }
 
+void AShellProjectPlayerController::SetShellUIFocus(bool bUIFocused)
+{
+	if (bUIFocused)
+	{
+		// GameAndUI + 按住左键时不隐藏光标：默认构造的 bHideCursorDuringCapture=true
+		// 会让按下瞬间视口捕获并隐藏光标，世界面片上的点击体验不像普通 UI。
+		FInputModeGameAndUI InputMode;
+		InputMode.SetHideCursorDuringCapture(false);
+		SetInputMode(InputMode);
+		SetShowMouseCursor(true);
+	}
+	else
+	{
+		SetInputMode(FInputModeGameOnly());
+		SetShowMouseCursor(false);
+	}
+}
+
 void AShellProjectPlayerController::HandleTerminalToggle()
 {
-	// T12 前缀：双实例三态循环。仅当当前 Pawn 是游戏角色（游戏场景）时循环
-	// 呈现状态；菜单（登录）场景仍走子系统 ToggleTerminal 原行为。
+	// 游戏场景（角色）：循环呈现状态。
 	if (Cast<AShellProjectCharacter>(GetPawn()))
 	{
 		CycleShellPresentation();
 		return;
 	}
 
-	if (UGameInstance* GI = GetGameInstance())
-	{
-		if (UShellSubsystem* Shell = GI->GetSubsystem<UShellSubsystem>())
-		{
-			Shell->ToggleTerminal(this);
-		}
-	}
+	// 菜单（登录）场景：世界面片终端（AShellWorldScreenActor）是唯一登录入口，
+	// 不再弹出全屏 HUD 终端（旧登录方式残留，会与世界屏叠加显示）。
+	UE_LOG(LogTemp, Verbose, TEXT("[ShellProject] 菜单场景 Tab 已禁用（世界屏为唯一登录入口）"));
 }
 
 void AShellProjectPlayerController::CycleShellPresentation()
@@ -130,20 +140,23 @@ UShellTerminalWidget* AShellProjectPlayerController::EnsureHudShellWidget()
 	return HudShellWidget.Get();
 }
 
-UWidgetComponent* AShellProjectPlayerController::GetShellScreenComponentOrNull() const
+UShellWorldScreen* AShellProjectPlayerController::GetWorldScreenOrNull() const
 {
-	return Cast<AShellProjectCharacter>(GetPawn()) ? Cast<AShellProjectCharacter>(GetPawn())->GetShellScreenComponent() : nullptr;
+	const AShellProjectCharacter* Char = Cast<AShellProjectCharacter>(GetPawn());
+	return Char ? Char->GetWorldScreen() : nullptr;
 }
 
 void AShellProjectPlayerController::ApplyShellPresentation()
 {
 	UShellTerminalWidget* Hud = EnsureHudShellWidget();
-	UWidgetComponent* WorldScreen = GetShellScreenComponentOrNull();
+	UShellWorldScreen* WorldScreen = GetWorldScreenOrNull();
+	AShellProjectCharacter* Char = Cast<AShellProjectCharacter>(GetPawn());
 
-	// 面前输入模式标志：仅 InputWindow 态为 true（输入让给 UI）；其余态为 false（可移动/视角）。
-	if (AShellProjectCharacter* Char = Cast<AShellProjectCharacter>(GetPawn()))
+	// 输入接管统一由世界屏组件持有：仅 InputWindow 态激活
+	//（左键/滚轮转发到面片 + 置位标志让角色忽略移动/视角）。
+	if (WorldScreen)
 	{
-		Char->SetShellInputActive(PresentationState == EShellPresentationState::InputWindow);
+		WorldScreen->SetInputActive(PresentationState == EShellPresentationState::InputWindow);
 	}
 
 	if (Hud)
@@ -166,7 +179,7 @@ void AShellProjectPlayerController::ApplyShellPresentation()
 		Hud->SetVisibility(ESlateVisibility::Visible);
 		if (WorldScreen)
 		{
-			WorldScreen->SetVisibility(false);
+			WorldScreen->SetScreenVisible(false);
 		}
 		break;
 	}
@@ -179,18 +192,18 @@ void AShellProjectPlayerController::ApplyShellPresentation()
 		Hud->SetVisibility(ESlateVisibility::Visible);
 		if (WorldScreen)
 		{
-			WorldScreen->SetVisibility(false);
+			WorldScreen->SetScreenVisible(false);
 		}
 		break;
 	}
 	case EShellPresentationState::HeldInHand:
 	{
-		// 倾斜如拿在手里：显示世界 WidgetComponent 实例，姿态=手持（前/左/下/小）。
+		// 倾斜如拿在手里：显示世界屏实例，姿态=手持（前/左/下/小）。
 		Hud->SetVisibility(ESlateVisibility::Collapsed);
 		if (WorldScreen)
 		{
-			WorldScreen->SetVisibility(true);
-			if (AShellProjectCharacter* Char = Cast<AShellProjectCharacter>(GetPawn()))
+			WorldScreen->SetScreenVisible(true);
+			if (Char)
 			{
 				Char->SetShellScreenPose(EShellScreenPose::Hand);
 			}
@@ -199,24 +212,17 @@ void AShellProjectPlayerController::ApplyShellPresentation()
 	}
 	case EShellPresentationState::InputWindow:
 	{
-		// 用世界组件，姿态=面前（近/居中/大，可输入），隐藏视口 HUD。
+		// 用世界屏，姿态=面前（近/居中/大，可输入），隐藏视口 HUD。
 		Hud->SetVisibility(ESlateVisibility::Collapsed);
 		if (WorldScreen)
 		{
-			WorldScreen->SetVisibility(true);
-			if (AShellProjectCharacter* Char = Cast<AShellProjectCharacter>(GetPawn()))
+			WorldScreen->SetScreenVisible(true);
+			if (Char)
 			{
 				Char->SetShellScreenPose(EShellScreenPose::Front);
-				// 聚焦终端输入框，使键盘打字可用（下一帧，待 widget 窗口就绪）。
-				if (UShellTerminalWidget* W = Char->GetShellScreenWidget())
-				{
-					const TSharedRef<SWidget> FocusTarget = W->GetFocusTarget();
-					GetWorldTimerManager().SetTimerForNextTick([FocusTarget]()
-					{
-						FSlateApplication::Get().SetKeyboardFocus(FocusTarget, EFocusCause::SetDirectly);
-					});
-				}
 			}
+			// 聚焦终端输入框（组件内部延迟到下一帧，待 widget 窗口就绪）。
+			WorldScreen->FocusTerminal();
 		}
 		break;
 	}
@@ -226,16 +232,7 @@ void AShellProjectPlayerController::ApplyShellPresentation()
 	}
 	}
 
-	// 面前态用 GameAndUI：保留游戏输入（Tab 可切回/可移动），同时显示光标，
-	// 由 UWidgetInteractionComponent 处理点击（聚焦输入框打字 / 触发快捷按钮）。
-	if (PresentationState == EShellPresentationState::InputWindow)
-	{
-		SetInputMode(FInputModeGameAndUI());
-		SetShowMouseCursor(true);
-	}
-	else
-	{
-		SetInputMode(FInputModeGameOnly());
-		SetShowMouseCursor(false);
-	}
+	// 输入模式/光标策略统一入口：面前态 GameAndUI + 光标（按住不隐藏），
+	// 世界屏自包含指针输入处理点击/滚轮；其余态 GameOnly 纯游戏输入。
+	SetShellUIFocus(PresentationState == EShellPresentationState::InputWindow);
 }
