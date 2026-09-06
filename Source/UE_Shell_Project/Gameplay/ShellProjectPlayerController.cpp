@@ -136,8 +136,10 @@ void AShellProjectPlayerController::HandleEscapeUI()
 {
 	// HostOwned 流控键范式：ESC = 退出输入接管态。
 	// 仅 InputWindow 态有"UI 输入态"可退（回默认 Shrink：世界屏隐藏输入接管、
-	// 恢复 GameOnly + 光标隐藏，由 ApplyShellPresentation 统一落地）；
-	// 其余状态无 UI 输入态，忽略。
+	// 恢复 GameOnly + 光标隐藏，由 ApplyShellPresentation 统一落地）。
+	// 菜单（登录）场景走本函数但故意空操作：世界屏即登录 UI 本体，
+	// 没有"可退出"的输入态（Shell 常规约定 ESC 也无操作，清行归 Ctrl+C）。
+	// 若未来要给登录页 ESC 加语义（如清空当前输入行），在此处按场景分支。
 	if (PresentationState == EShellPresentationState::InputWindow)
 	{
 		SetShellPresentationState(static_cast<int32>(EShellPresentationState::Shrink));
