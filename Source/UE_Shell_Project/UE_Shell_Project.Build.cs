@@ -8,13 +8,13 @@ public class UE_Shell_Project : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		// 源码按场景分组放在子文件夹（Menu/Screen/Gameplay），
-		// 加入头文件搜索路径后 include 仍用平铺名称（如 "ShellWorldScreen.h"）。
+		// 源码按场景分组放在子文件夹（Menu/Gameplay），
+		// 加入头文件搜索路径后 include 仍用平铺名称（如 "ShellProjectPlayerState.h"）。
 		// 注意：相对路径按 Source/ 解析，故用 ModuleDirectory 拼模块内绝对路径。
+		// Shell 世界屏已迁入插件（Shell_UE），宿主不再包含 /Screen。
 		PublicIncludePaths.AddRange(new string[]
 		{
 			ModuleDirectory + "/Menu",
-			ModuleDirectory + "/Screen",
 			ModuleDirectory + "/Gameplay",
 		});
 

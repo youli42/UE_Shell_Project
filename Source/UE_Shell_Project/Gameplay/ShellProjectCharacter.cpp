@@ -23,7 +23,7 @@
 
 #include "Shell/Terminal/ShellTerminalWidget.h"
 #include "ShellProjectPlayerState.h"
-#include "ShellWorldScreen.h"
+#include "Shell/WorldScreen/ShellWorldScreen.h"
 
 AShellProjectCharacter::AShellProjectCharacter()
 {

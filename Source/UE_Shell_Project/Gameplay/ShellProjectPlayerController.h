@@ -14,17 +14,13 @@ class UShellWorldScreen;
 /**
  * 双实例-演示用的 shell 呈现状态（T12 前缀）。
  *
- * Tab 在四态间循环切换：
- *  - Shrink         缩小显示画面（HUD 视口实例，锚左下角）
- *  - ShrinkOccluded 缩小且下半部分被遮挡（HUD 实例下沉到屏幕边缘/底槽）
- *  - HeldInHand     倾斜如同拿在手里（世界 WidgetComponent 实例，面向相机）
- *  - InputWindow    居中大窗口 + 可输入（切到 UIOnly，焦点给终端输入框）
+ * Tab 在两态间循环切换（仅保留世界屏手持态，已移除 HUD 视口态）：
+ *  - HeldInHand     手持面板（世界 WidgetComponent 实例，放低可见）
+ *  - InputWindow    面前大窗口 + 可输入（世界屏 Front 姿态，输入接管 + 焦点给终端）
  */
 UENUM(BlueprintType)
 enum class EShellPresentationState : uint8
 {
-	Shrink          UMETA(DisplayName = "Shrink"),
-	ShrinkOccluded  UMETA(DisplayName = "Shrink + Occluded"),
 	HeldInHand      UMETA(DisplayName = "Held In Hand"),
 	InputWindow     UMETA(DisplayName = "Input Window"),
 };
@@ -53,13 +49,13 @@ public:
 
 	/**
 	 * 前进到下一个呈现状态并应用（Tab 触发；宿主/蓝图亦可驱动）。
-	 * 三个状态循环：
-	 *  Shrink -> ShrinkOccluded -> HeldInHand -> Shrink ...
+	 * 两态循环：
+	 *  HeldInHand -> InputWindow -> HeldInHand ...
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Shell Presentation")
 	void CycleShellPresentation();
 
-	/** 直接跳到指定状态（0=Shrink, 1=ShrinkOccluded, 2=HeldInHand），越界夹取。 */
+	/** 直接跳到指定状态（0=HeldInHand, 1=InputWindow），越界夹取。 */
 	UFUNCTION(BlueprintCallable, Category = "Shell Presentation")
 	void SetShellPresentationState(int32 InState);
 
@@ -73,13 +69,13 @@ public:
 	void SetShellUIFocus(bool bUIFocused);
 
 protected:
-	/** 持有角色后自动应用默认呈现态（Shrink，左下角常显）。 */
+	/** 持有角色后自动应用默认呈现态（HeldInHand，手持面板）。 */
 	virtual void OnPossess(APawn* InPawn) override;
 
 private:
 	void HandleTerminalToggle();
 
-	/** HostOwned 流控键范式下的 ESC：退出输入接管态（InputWindow → Shrink）。 */
+	/** HostOwned 流控键范式下的 ESC：退出输入接管态（InputWindow → HeldInHand）。 */
 	void HandleEscapeUI();
 
 	/** 终端面板捕获的宿主流控键（HostOwned 范式）：Tab=循环呈现态、ESC=退出输入态。
@@ -87,11 +83,8 @@ private:
 	UFUNCTION()
 	void HandleHostFlowKey(FName KeyName);
 
-	/** 把当前状态落到各实例：显示/隐藏、缩放/平移、输入接管。 */
+	/** 把当前状态落到各实例：显示/隐藏、姿态、输入接管。 */
 	void ApplyShellPresentation();
-
-	/** 惰性创建 HUD 视口实例（同一个 UShellSubsystem 输出的双实例之一）。 */
-	UShellTerminalWidget* EnsureHudShellWidget();
 
 	/** 当前 Pawn 若无世界屏组件则返回 null（菜单/非角色场景）。 */
 	UShellWorldScreen* GetWorldScreenOrNull() const;
@@ -118,10 +111,6 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UInputMappingContext> EscapeMappingContext;
 
-	/** 双实例-HUD 实例：视口底左的终端（RenderTransform 做缩小/下沉）。 */
-	UPROPERTY(Transient)
-	TObjectPtr<UShellTerminalWidget> HudShellWidget;
-
 	/** 当前呈现状态（Tab 循环）。 */
-	EShellPresentationState PresentationState = EShellPresentationState::Shrink;
+	EShellPresentationState PresentationState = EShellPresentationState::HeldInHand;
 };
