@@ -11,6 +11,7 @@ class UInputAction;
 class UInputComponent;
 class UInputMappingContext;
 class UStaticMeshComponent;
+class UShellFloatingQuickButton;
 class UShellTerminalWidget;
 class UShellWorldScreen;
 class UWidgetComponent;
@@ -54,6 +55,9 @@ public:
 
 	/** 世界屏幕组件（统一显示/交互/输入接管接口）。 */
 	UShellWorldScreen* GetWorldScreen() const { return WorldScreen; }
+
+	/** M5：快捷悬浮按钮（挂在世界屏下，跟随姿态插值；接线见 PlayerController）。 */
+	UShellFloatingQuickButton* GetFloatingQuickButton() const { return FloatingQuickButton; }
 
 	/** 世界实例载体组件（供外部驱动 transform）。 */
 	UWidgetComponent* GetShellScreenComponent() const;
@@ -105,6 +109,10 @@ private:
 	/** 双实例-世界实例：手持屏幕（UShellWorldScreen 统一组件）。 */
 	UPROPERTY(VisibleAnywhere, Category = "Shell Project|Shell Screen")
 	TObjectPtr<UShellWorldScreen> WorldScreen;
+
+	/** M5：快捷悬浮按钮（UShellFloatingQuickButton 自包含组件）。 */
+	UPROPERTY(VisibleAnywhere, Category = "Shell Project|Shell Screen")
+	TObjectPtr<UShellFloatingQuickButton> FloatingQuickButton;
 
 	/** 当前目标姿态（面前/手持），Tick 插值动画用。 */
 	EShellScreenPose ShellPose = EShellScreenPose::Front;

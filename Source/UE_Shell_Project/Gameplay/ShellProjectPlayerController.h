@@ -8,8 +8,11 @@
 
 class UInputAction;
 class UInputMappingContext;
+class UShellFloatingQuickButton;
 class UShellTerminalWidget;
 class UShellWorldScreen;
+struct FShellHotkeyChord;
+struct FShellHotkeyBinding;
 
 /**
  * 双实例-演示用的 shell 呈现状态（T12 前缀）。
@@ -110,6 +113,45 @@ private:
 	/** ESC 流控映射上下文（运行时构建，与 IMC_Shell(0) 并存）。 */
 	UPROPERTY(Transient)
 	TObjectPtr<UInputMappingContext> EscapeMappingContext;
+
+	// --- M5：快捷指令全局热键 + 悬浮菜单开关键 ---------------------------------
+
+	/** 按 UShellSubsystem::GetEffectiveHotkeys 全量重建热键 IMC（仅变更时调用）。 */
+	void RebuildHotkeyMapping();
+
+	/** 菜单开关键绑定（运行时构建，一次即可；玩家改开关键走 qcmd togglekey）。 */
+	void BuildMenuToggleBinding();
+
+	/** 热键触发：修饰键按 Slate 真实状态校验后交给子系统消费。 */
+	void HandleQuickCommandHotkey(const FShellHotkeyChord& InChord);
+
+	UFUNCTION()
+	void HandleQuickCommandsChanged();
+
+	/** 当前 Pawn 的悬浮按钮（非角色场景返回 null）。 */
+	UShellFloatingQuickButton* GetFloatingQuickButtonOrNull() const;
+
+	/** 热键映射上下文（运行时构建；重建 = Remove + Add，非每帧）。 */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputMappingContext> QuickHotkeyMappingContext;
+
+	/** 菜单开关键动作 + 映射（运行时构建）。 */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> MenuToggleAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputMappingContext> MenuToggleMappingContext;
+
+	/** 热键动作表（UPROPERTY 防 GC；与 IMC 一起在重建时整体替换）。 */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UInputAction>> QuickHotkeyActions;
+
+	/**
+	 * lambda 绑定句柄表（M5 焦点修复顺带）：BindActionValueLambda 的绑定挂在
+	 * InputComponent 上，不随 IMC 移除而失效 —— 重建前必须按句柄清掉，
+	 * 否则每次 OnQuickCommandsChanged 都累积一批永不触发的死绑定。
+	 */
+	TArray<uint32> QuickHotkeyBindingHandles;
 
 	/** 当前呈现状态（Tab 循环）。 */
 	EShellPresentationState PresentationState = EShellPresentationState::HeldInHand;

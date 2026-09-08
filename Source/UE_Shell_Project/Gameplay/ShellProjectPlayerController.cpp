@@ -4,12 +4,16 @@
 #include "Engine/GameInstance.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Framework/Application/SlateApplication.h"
 #include "GameFramework/Pawn.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
 
+#include "Shell/Terminal/ShellQuickCommandHotkeys.h"
+#include "Shell/Terminal/ShellSettings.h"
 #include "Shell/Terminal/ShellSubsystem.h"
 #include "Shell/Terminal/ShellTerminalWidget.h"
+#include "Shell/WorldScreen/ShellFloatingQuickButton.h"
 #include "ShellProjectCharacter.h"
 #include "Shell/WorldScreen/ShellWorldScreen.h"
 
@@ -19,6 +23,29 @@ namespace
 	EShellPresentationState NextPresentationState(EShellPresentationState InState)
 	{
 		return static_cast<EShellPresentationState>((static_cast<uint8>(InState) + 1) % 2);
+	}
+
+	/**
+	 * 修饰键校验（M5 热键/开关键共用）。
+	 *
+	 * ⚠️ 主键本身是修饰键时必须特殊处理：开关键默认 LeftAlt（无修饰），
+	 * 玩家按下 LeftAlt 的瞬间 IsAltDown()==true，而 Chord.bAlt==false ——
+	 * 若按"逐位相等"校验，主键是修饰键的组合键（"alt" / "ctrl" 单键）
+	 * 会【永远无法触发】。正确语义：主键对应的那个修饰位视为已按下，
+	 * 其余修饰位仍须逐位匹配（按 LeftAlt 时额外按住 Ctrl → 不匹配，拒绝）。
+	 */
+	bool MatchesModifiers(const FShellHotkeyChord& InChord, const FModifierKeysState& InMods)
+	{
+		const FKey& Key = InChord.Key;
+		const bool bKeyIsCtrl  = (Key == EKeys::LeftControl  || Key == EKeys::RightControl);
+		const bool bKeyIsAlt   = (Key == EKeys::LeftAlt      || Key == EKeys::RightAlt);
+		const bool bKeyIsShift = (Key == EKeys::LeftShift    || Key == EKeys::RightShift);
+		const bool bKeyIsCmd   = (Key == EKeys::LeftCommand || Key == EKeys::RightCommand);
+
+		return InMods.IsControlDown() == (InChord.bCtrl || bKeyIsCtrl)
+			&& InMods.IsAltDown()     == (InChord.bAlt || bKeyIsAlt)
+			&& InMods.IsShiftDown()   == (InChord.bShift || bKeyIsShift)
+			&& InMods.IsCommandDown() == (InChord.bCmd || bKeyIsCmd);
 	}
 }
 
@@ -63,6 +90,9 @@ void AShellProjectPlayerController::BeginPlay()
 		if (UShellSubsystem* Shell = GI->GetSubsystem<UShellSubsystem>())
 		{
 			Shell->OnHostFlowKey.AddUniqueDynamic(this, &AShellProjectPlayerController::HandleHostFlowKey);
+
+			// M5：快捷指令热键 —— 列表/绑定变化后重建 IMC（仅变更时调用，非每帧）。
+			Shell->OnQuickCommandsChanged.AddUniqueDynamic(this, &AShellProjectPlayerController::HandleQuickCommandsChanged);
 		}
 	}
 
@@ -86,6 +116,10 @@ void AShellProjectPlayerController::BeginPlay()
 			}
 		}
 	}
+
+	// M5：全局菜单开关键 + 首次热键映射。
+	BuildMenuToggleBinding();
+	RebuildHotkeyMapping();
 }
 
 void AShellProjectPlayerController::SetShellUIFocus(bool bUIFocused)
@@ -96,6 +130,16 @@ void AShellProjectPlayerController::SetShellUIFocus(bool bUIFocused)
 		// 会让按下瞬间视口捕获并隐藏光标，世界面片上的点击体验不像普通 UI。
 		FInputModeGameAndUI InputMode;
 		InputMode.SetHideCursorDuringCapture(false);
+		// M5 焦点修复：同步断言焦点目标。此前焦点完全依赖 ApplyShellPresentation
+		// 里 FocusTerminal() 的下一帧定时器 —— 同帧内再次切换输入模式或 PIE 失焦
+		// 会把延迟断言吞掉，之后键盘焦点停在 SViewport（打字进不了终端）。
+		if (UShellWorldScreen* Screen = GetWorldScreenOrNull())
+		{
+			if (UShellTerminalWidget* Terminal = Screen->GetTerminalWidget())
+			{
+				InputMode.SetWidgetToFocus(Terminal->GetFocusTarget());
+			}
+		}
 		SetInputMode(InputMode);
 		SetShowMouseCursor(true);
 	}
@@ -189,6 +233,13 @@ void AShellProjectPlayerController::ApplyShellPresentation()
 		WorldScreen->SetInputActive(PresentationState == EShellPresentationState::InputWindow);
 	}
 
+	// M5：悬浮按钮只在 InputWindow 态可交互 —— 手持态面片只有 70x44cm，
+	// 悬浮按钮物理尺寸过小难以命中，且手持态不需要快捷指令。
+	if (UShellFloatingQuickButton* Button = GetFloatingQuickButtonOrNull())
+	{
+		Button->SetInteractionActive(PresentationState == EShellPresentationState::InputWindow);
+	}
+
 	switch (PresentationState)
 	{
 	case EShellPresentationState::HeldInHand:
@@ -228,4 +279,168 @@ void AShellProjectPlayerController::ApplyShellPresentation()
 	// 输入模式/光标策略统一入口：面前态 GameAndUI + 光标（按住不隐藏），
 	// 世界屏自包含指针输入处理点击/滚轮；其余态 GameOnly 纯游戏输入。
 	SetShellUIFocus(PresentationState == EShellPresentationState::InputWindow);
+}
+
+// --- M5：快捷指令全局热键 + 悬浮菜单开关键 --------------------------------------
+
+UShellFloatingQuickButton* AShellProjectPlayerController::GetFloatingQuickButtonOrNull() const
+{
+	const AShellProjectCharacter* Char = Cast<AShellProjectCharacter>(GetPawn());
+	return Char ? Char->GetFloatingQuickButton() : nullptr;
+}
+
+void AShellProjectPlayerController::HandleQuickCommandsChanged()
+{
+	// 绑定可能已变化（qcmd bind / 商店安装 / 后续 GUI 编辑）→ 全量重建 IMC。
+	// 只在广播时调用，非每帧。
+	RebuildHotkeyMapping();
+}
+
+void AShellProjectPlayerController::RebuildHotkeyMapping()
+{
+	const ULocalPlayer* LP = GetLocalPlayer();
+	UEnhancedInputLocalPlayerSubsystem* Subsystem =
+		LP ? LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>() : nullptr;
+	if (!Subsystem)
+	{
+		return;
+	}
+
+	UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(InputComponent);
+	if (!EnhancedInput)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ShellProject] InputComponent 不是 EnhancedInputComponent，快捷指令热键未绑定"));
+		return;
+	}
+
+	// 全量重建：Remove 旧上下文 + 重建 IMC（量级 = 快捷指令条数，≤99，开销可忽略）。
+	if (QuickHotkeyMappingContext)
+	{
+		Subsystem->RemoveMappingContext(QuickHotkeyMappingContext);
+		QuickHotkeyMappingContext = nullptr;
+	}
+	QuickHotkeyActions.Reset();
+
+	// lambda 绑定挂在 InputComponent 上，不随 IMC 移除而失效；
+	// 先按句柄清掉上一轮绑定，否则每次广播都累积一批死绑定。
+	for (const uint32 Handle : QuickHotkeyBindingHandles)
+	{
+		EnhancedInput->RemoveBindingByHandle(Handle);
+	}
+	QuickHotkeyBindingHandles.Reset();
+
+	UShellSubsystem* Shell = GetGameInstance() ? GetGameInstance()->GetSubsystem<UShellSubsystem>() : nullptr;
+	if (!Shell)
+	{
+		return;
+	}
+
+	const TArray<FShellHotkeyBinding> Bindings = Shell->GetEffectiveHotkeys();
+	if (Bindings.Num() == 0)
+	{
+		return;
+	}
+
+	QuickHotkeyMappingContext = NewObject<UInputMappingContext>(this, TEXT("ShellQuickHotkeyMapping"));
+	for (int32 i = 0; i < Bindings.Num(); ++i)
+	{
+		const FShellHotkeyChord& Chord = Bindings[i].Chord;
+		if (!Chord.IsBound())
+		{
+			continue;
+		}
+
+		UInputAction* Action = NewObject<UInputAction>(this, *FString::Printf(TEXT("ShellQuickHotkey%d"), i));
+		Action->ValueType = EInputActionValueType::Boolean;
+		QuickHotkeyActions.Add(Action);
+		QuickHotkeyMappingContext->MapKey(Action, Chord.Key);
+
+		// 取舍说明：IMC 只绑主键，修饰键在回调里按 Slate 的真实修饰键状态校验。
+		// EnhancedInput 的组合键要走 UInputTriggerChordAction（多修饰键还需
+		// 修饰键 action 链），复杂度与收益不成比例；裸键抢字的风险由
+		// bRequireModifierForHotkey 在绑定层挡掉。
+		const FShellHotkeyChord Captured = Chord;
+		const FEnhancedInputActionEventBinding& Binding = EnhancedInput->BindActionValueLambda(Action, ETriggerEvent::Started,
+			[this, Captured](const FInputActionValue&)
+			{
+				HandleQuickCommandHotkey(Captured);
+			});
+		QuickHotkeyBindingHandles.Add(Binding.GetHandle());
+	}
+
+	// 优先级 3：高于世界屏指针映射（默认 2），保证热键不被屏幕输入遮蔽。
+	Subsystem->AddMappingContext(QuickHotkeyMappingContext, 3);
+}
+
+void AShellProjectPlayerController::HandleQuickCommandHotkey(const FShellHotkeyChord& InChord)
+{
+	// 修饰键校验：IMC 只绑了主键，这里必须核对真实修饰键状态，
+	// 否则裸 K 会误触发绑定了 Ctrl+K 的指令。
+	// 注意 MatchesModifiers 对"主键本身是修饰键"（如单键 LeftAlt 开关键）的豁免。
+	const FModifierKeysState Mods = FSlateApplication::Get().GetModifierKeys();
+	if (!MatchesModifiers(InChord, Mods))
+	{
+		return;
+	}
+
+	UShellSubsystem* Shell = GetGameInstance() ? GetGameInstance()->GetSubsystem<UShellSubsystem>() : nullptr;
+	if (!Shell)
+	{
+		return;
+	}
+
+	// 双管道之一（终端未聚焦时可达）；面板聚焦时由 OnPreviewKeyDown 先消费。
+	FString HitId;
+	Shell->TryConsumeHotkey(InChord.Key, InChord.bCtrl, InChord.bAlt, InChord.bShift, InChord.bCmd, HitId);
+}
+
+void AShellProjectPlayerController::BuildMenuToggleBinding()
+{
+	if (MenuToggleMappingContext)
+	{
+		return; // 幂等：一次构建即可
+	}
+
+	UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(InputComponent);
+	if (!EnhancedInput)
+	{
+		return;
+	}
+
+	const UShellSettings* Settings = UShellSettings::Get();
+	const FShellHotkeyChord ToggleChord = Settings ? Settings->FloatingMenuToggleChord : FShellHotkeyChord();
+	if (!ToggleChord.IsBound())
+	{
+		return;
+	}
+
+	MenuToggleAction = NewObject<UInputAction>(this, TEXT("ShellMenuToggleAction"));
+	MenuToggleAction->ValueType = EInputActionValueType::Boolean;
+
+	MenuToggleMappingContext = NewObject<UInputMappingContext>(this, TEXT("ShellMenuToggleMapping"));
+	MenuToggleMappingContext->MapKey(MenuToggleAction, ToggleChord.Key);
+
+	const FShellHotkeyChord Captured = ToggleChord;
+	EnhancedInput->BindActionValueLambda(MenuToggleAction, ETriggerEvent::Started,
+		[this, Captured](const FInputActionValue&)
+		{
+			const FModifierKeysState Mods = FSlateApplication::Get().GetModifierKeys();
+			if (!MatchesModifiers(Captured, Mods))
+			{
+				return;
+			}
+			if (UShellFloatingQuickButton* Button = GetFloatingQuickButtonOrNull())
+			{
+				Button->ToggleMenu();
+			}
+		});
+
+	if (const ULocalPlayer* LP = GetLocalPlayer())
+	{
+		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+		{
+			// 优先级 3：与热键 IMC 同级（不同主键，互不冲突）。
+			Subsystem->AddMappingContext(MenuToggleMappingContext, 3);
+		}
+	}
 }

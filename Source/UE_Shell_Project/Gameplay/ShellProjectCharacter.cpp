@@ -21,8 +21,10 @@
 #include "InputModifiers.h"
 #include "UObject/ConstructorHelpers.h"
 
+#include "Shell/Terminal/ShellSettings.h"
 #include "Shell/Terminal/ShellTerminalWidget.h"
 #include "ShellProjectPlayerState.h"
+#include "Shell/WorldScreen/ShellFloatingQuickButton.h"
 #include "Shell/WorldScreen/ShellWorldScreen.h"
 
 AShellProjectCharacter::AShellProjectCharacter()
@@ -62,6 +64,12 @@ AShellProjectCharacter::AShellProjectCharacter()
 	WorldScreen->SetScreenPhysicalSize(96.f, 60.f);
 	WorldScreen->SetVisualProxyEnabled(false); // 第一人称手持无需编辑器预览代理
 	WorldScreen->SetScreenVisible(false);
+
+	// M5：快捷悬浮按钮 —— 挂在世界屏下，面片做姿态插值时自动跟随。
+	// 自己的子组件（面片/交互）由其 OnComponentCreated 内部 attach，这里只挂组件本体。
+	FloatingQuickButton = CreateDefaultSubobject<UShellFloatingQuickButton>(TEXT("FloatingQuickButton"));
+	FloatingQuickButton->SetupAttachment(WorldScreen);
+	FloatingQuickButton->SetButtonVisible(false); // 由 BeginPlay 按配置决定显隐
 
 	// 输入动作 + IMC 在运行时惰性构建（构造器内 NewObject 会触发
 	// UObjectGlobals.cpp:4880 致命错误——见 EnsureInputBuilt）。
@@ -188,6 +196,16 @@ void AShellProjectCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	BuildAndAddCharacterInputMapping();
+
+	// M5：悬浮按钮接线 —— 摆位（按设置偏移）+ 按 QuickBarMode 决定显隐。
+	// 交互接管由 PlayerController::ApplyShellPresentation 在 InputWindow 态开启。
+	if (FloatingQuickButton)
+	{
+		FloatingQuickButton->AttachToScreen(WorldScreen);
+		const UShellSettings* Settings = UShellSettings::Get();
+		const bool bEnableFloating = (Settings == nullptr) || (Settings->QuickBarMode != EShellQuickBarMode::ChipBar);
+		FloatingQuickButton->SetButtonVisible(bEnableFloating);
+	}
 }
 
 void AShellProjectCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
