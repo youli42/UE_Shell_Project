@@ -12,7 +12,6 @@
 
 #include "Shell/Input/ShellInputStateManager.h"
 #include "Shell/Terminal/ShellQuickCommandHotkeys.h"
-#include "Shell/Terminal/ShellSettings.h"
 #include "Shell/Terminal/ShellSubsystem.h"
 #include "Shell/Terminal/ShellTerminalWidget.h"
 #include "Shell/WorldScreen/ShellFloatingQuickButton.h"
@@ -120,7 +119,7 @@ void AShellProjectPlayerController::BeginPlay()
 	}
 
 	// M5：全局菜单开关键 + 首次热键映射。
-	BuildMenuToggleBinding();
+	RebuildMenuToggleMapping();
 	RebuildHotkeyMapping();
 }
 
@@ -305,9 +304,10 @@ UShellFloatingQuickButton* AShellProjectPlayerController::GetFloatingQuickButton
 
 void AShellProjectPlayerController::HandleQuickCommandsChanged()
 {
-	// 绑定可能已变化（qcmd bind / 商店安装 / 后续 GUI 编辑）→ 全量重建 IMC。
-	// 只在广播时调用，非每帧。
+	// 绑定可能已变化（qcmd bind / qcmd togglekey / 商店安装 / 后续 GUI 编辑）
+	// → 全量重建 IMC。只在广播时调用，非每帧。
 	RebuildHotkeyMapping();
+	RebuildMenuToggleMapping();
 }
 
 void AShellProjectPlayerController::RebuildHotkeyMapping()
@@ -408,12 +408,18 @@ void AShellProjectPlayerController::HandleQuickCommandHotkey(const FShellHotkeyC
 	Shell->TryConsumeHotkey(InChord.Key, InChord.bCtrl, InChord.bAlt, InChord.bShift, InChord.bCmd, HitId);
 }
 
-void AShellProjectPlayerController::BuildMenuToggleBinding()
+void AShellProjectPlayerController::RebuildMenuToggleMapping()
 {
-	if (MenuToggleMappingContext)
+	UShellSubsystem* Shell = GetGameInstance() ? GetGameInstance()->GetSubsystem<UShellSubsystem>() : nullptr;
+	if (!Shell)
 	{
-		return; // 幂等：一次构建即可
+		return;
 	}
+
+	// 权威键位：GetMenuToggleChord 先取设置默认、再叠加玩家覆盖（qcmd togglekey
+	// 写存档的那份）。此前直接读 Settings->FloatingMenuToggleChord，导致玩家改键
+	// 在宿主侧永远不生效——面板聚焦时按新键能开菜单、终端关闭时按新键无反应。
+	const FShellHotkeyChord ToggleChord = Shell->GetMenuToggleChord();
 
 	UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(InputComponent);
 	if (!EnhancedInput)
@@ -421,40 +427,69 @@ void AShellProjectPlayerController::BuildMenuToggleBinding()
 		return;
 	}
 
-	const UShellSettings* Settings = UShellSettings::Get();
-	const FShellHotkeyChord ToggleChord = Settings ? Settings->FloatingMenuToggleChord : FShellHotkeyChord();
-	if (!ToggleChord.IsBound())
+	ULocalPlayer* LP = GetLocalPlayer();
+	UEnhancedInputLocalPlayerSubsystem* Subsystem =
+		LP ? LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>() : nullptr;
+	if (!Subsystem)
 	{
 		return;
 	}
 
-	MenuToggleAction = NewObject<UInputAction>(this, TEXT("ShellMenuToggleAction"));
-	MenuToggleAction->ValueType = EInputActionValueType::Boolean;
+	// 重建式：先摘掉旧映射上下文（qcmd togglekey 后由 OnQuickCommandsChanged 再进来）。
+	if (MenuToggleMappingContext)
+	{
+		Subsystem->RemoveMappingContext(MenuToggleMappingContext);
+		MenuToggleMappingContext = nullptr;
+	}
+
+	if (!ToggleChord.IsBound())
+	{
+		return; // 开关键被清空：只卸载旧映射，不重建
+	}
+
+	// 动作与 lambda 绑定只建一次：BindActionValueLambda 挂在 InputComponent 上、
+	// 不随 IMC 移除失效，重复 NewObject 会累积死绑定（同快捷热键的教训）。
+	// lambda 不捕获 chord —— 每次按键都回查权威键位，改键无需重建绑定。
+	if (!MenuToggleAction)
+	{
+		MenuToggleAction = NewObject<UInputAction>(this, TEXT("ShellMenuToggleAction"));
+		MenuToggleAction->ValueType = EInputActionValueType::Boolean;
+		EnhancedInput->BindActionValueLambda(MenuToggleAction, ETriggerEvent::Started,
+			[this](const FInputActionValue&)
+			{
+				HandleMenuToggleKey();
+			});
+	}
 
 	MenuToggleMappingContext = NewObject<UInputMappingContext>(this, TEXT("ShellMenuToggleMapping"));
 	MenuToggleMappingContext->MapKey(MenuToggleAction, ToggleChord.Key);
 
-	const FShellHotkeyChord Captured = ToggleChord;
-	EnhancedInput->BindActionValueLambda(MenuToggleAction, ETriggerEvent::Started,
-		[this, Captured](const FInputActionValue&)
-		{
-			const FModifierKeysState Mods = FSlateApplication::Get().GetModifierKeys();
-			if (!MatchesModifiers(Captured, Mods))
-			{
-				return;
-			}
-			if (UShellFloatingQuickButton* Button = GetFloatingQuickButtonOrNull())
-			{
-				Button->ToggleMenu();
-			}
-		});
+	// 优先级 3：与热键 IMC 同级（不同主键，互不冲突）。
+	Subsystem->AddMappingContext(MenuToggleMappingContext, 3);
+}
 
-	if (const ULocalPlayer* LP = GetLocalPlayer())
+void AShellProjectPlayerController::HandleMenuToggleKey()
+{
+	UShellSubsystem* Shell = GetGameInstance() ? GetGameInstance()->GetSubsystem<UShellSubsystem>() : nullptr;
+	if (!Shell)
 	{
-		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
-		{
-			// 优先级 3：与热键 IMC 同级（不同主键，互不冲突）。
-			Subsystem->AddMappingContext(MenuToggleMappingContext, 3);
-		}
+		return;
+	}
+
+	// 每次按键回查权威键位 + 真实修饰键：即便 IMC 一时落后于改键，
+	// 也能拦住"按旧键误触发"（MatchesModifiers 对"主键本身是修饰键"有豁免）。
+	const FShellHotkeyChord Chord = Shell->GetMenuToggleChord();
+	const FModifierKeysState Mods = FSlateApplication::Get().GetModifierKeys();
+	if (!MatchesModifiers(Chord, Mods))
+	{
+		return;
+	}
+
+	// 直接调呈现层，不走 UShellSubsystem::OnQuickMenuToggled 广播：该订阅只在
+	// 悬浮按钮首次 SetInteractionActive(true)（进过 InputWindow 态）后建立，
+	// 而开关键按设计在 HeldInHand 态也要生效（见《宿主接入指南》§6.6）。
+	if (UShellFloatingQuickButton* Button = GetFloatingQuickButtonOrNull())
+	{
+		Button->ToggleMenu();
 	}
 }

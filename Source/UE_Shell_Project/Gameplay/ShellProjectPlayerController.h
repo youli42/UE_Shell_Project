@@ -124,8 +124,15 @@ private:
 	/** 按 UShellSubsystem::GetEffectiveHotkeys 全量重建热键 IMC（仅变更时调用）。 */
 	void RebuildHotkeyMapping();
 
-	/** 菜单开关键绑定（运行时构建，一次即可；玩家改开关键走 qcmd togglekey）。 */
-	void BuildMenuToggleBinding();
+	/**
+	 * 重建菜单开关键 IMC（重建式：qcmd togglekey 经 OnQuickCommandsChanged 回调进来）。
+	 * 键位取 `UShellSubsystem::GetMenuToggleChord()`——先设置默认、再叠加玩家覆盖，
+	 * 不直接读 `Settings->FloatingMenuToggleChord`（那样会漏掉玩家改键）。
+	 */
+	void RebuildMenuToggleMapping();
+
+	/** 开关键按下：按权威键位校验修饰键后开合悬浮菜单。 */
+	void HandleMenuToggleKey();
 
 	/** 热键触发：修饰键按 Slate 真实状态校验后交给子系统消费。 */
 	void HandleQuickCommandHotkey(const FShellHotkeyChord& InChord);
