@@ -64,11 +64,11 @@ public:
 	void SetShellPresentationState(int32 InState);
 
 	/**
-	 * 输入状态入口（薄映射，公开 BlueprintCallable 签名不变）。
-	 * 输入模式/光标/焦点的裁决已由 UShellInputStateManager 声明式接管，
-	 * 本函数不再直接构造 FInputMode* / SetInputMode：
-	 *  - true  有活跃世界屏打字面 → UiTyping（聚焦终端）；否则 UiBrowse（只显示 UI 不抢焦）。
-	 *  - false Gameplay（纯游戏输入、无光标）。
+	 * 输入状态入口（公开 BlueprintCallable 签名不变）。
+	 * 只表达意图，不判断打字面、不指定状态名 —— 由 UShellInputStateManager 裁决：
+	 *  - true  RequestUiState：有活动打字面 → UiTyping（聚焦终端）；
+	 *          否则 UiBrowse（只显示 UI、不抢键盘焦点）。
+	 *  - false RequestGameplayState：Gameplay（纯游戏输入、无光标）。
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Shell Presentation")
 	void SetShellUIFocus(bool bUIFocused);
@@ -94,8 +94,8 @@ private:
 	/** 当前 Pawn 若无世界屏组件则返回 null（菜单/非角色场景）。 */
 	UShellWorldScreen* GetWorldScreenOrNull() const;
 
-	/** 当前世界屏是否为"活动打字面"（输入接管 + 面片可见 + 终端控件在）。 */
-	bool IsActiveWorldScreenTyping() const;
+	/** 输入状态管理器（GameInstance 子系统；不可用时返回 null）。 */
+	UShellInputStateManager* GetInputStateManager() const;
 
 	/** Tab 终端开关动作（插件资产；软引用，可由蓝图/编辑器替换绑定）。 */
 	UPROPERTY(EditAnywhere, Category = "Shell|Input")

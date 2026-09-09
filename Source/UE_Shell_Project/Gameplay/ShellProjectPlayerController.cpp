@@ -10,7 +10,6 @@
 #include "InputAction.h"
 #include "InputMappingContext.h"
 
-#include "Shell/Input/ShellInputStateCore.h"
 #include "Shell/Input/ShellInputStateManager.h"
 #include "Shell/Terminal/ShellQuickCommandHotkeys.h"
 #include "Shell/Terminal/ShellSettings.h"
@@ -127,21 +126,19 @@ void AShellProjectPlayerController::BeginPlay()
 
 void AShellProjectPlayerController::SetShellUIFocus(bool bUIFocused)
 {
-	UShellInputStateManager* Mgr = GetGameInstance() ? GetGameInstance()->GetSubsystem<UShellInputStateManager>() : nullptr;
-	if (!Mgr)
+	// 只表达意图：打字面判定与状态名解析全部交给管理器。
+	//（此前本函数自己查 IsActiveWorldScreenTyping，与 ApplyShellPresentation 的
+	//  判据不一致 —— 同一个决定两处编码，必然漂移。）
+	if (UShellInputStateManager* Mgr = GetInputStateManager())
 	{
-		return;
-	}
-
-	if (bUIFocused)
-	{
-		// 有活跃世界屏打字面 → UiTyping（聚焦终端）；否则 UiBrowse（只显示 UI 不抢焦）。
-		const bool bHasTypingSurface = IsActiveWorldScreenTyping();
-		Mgr->RequestState(bHasTypingSurface ? Shell::InputState::UiTyping : Shell::InputState::UiBrowse);
-	}
-	else
-	{
-		Mgr->RequestState(Shell::InputState::Gameplay);
+		if (bUIFocused)
+		{
+			Mgr->RequestUiState();
+		}
+		else
+		{
+			Mgr->RequestGameplayState();
+		}
 	}
 }
 
@@ -203,6 +200,11 @@ void AShellProjectPlayerController::OnPossess(APawn* InPawn)
 	Super::OnPossess(InPawn);
 
 	// 进入游戏场景（手持角色）即应用默认态：HeldInHand（手持面板）。
+	//
+	// ⚠️ OnPossess 只在服务端调用（含单机/ListenServer）。本类作为"活示例"若被
+	// dedicated server + 客户端架构照抄，客户端 PC 不会走到这里，默认输入状态
+	// 不会被应用——那种架构下应改挂 AcknowledgePossession（客户端也走），
+	// 或由客户端订阅 UShellInputStateManager::OnStateChanged 自行兜底。
 	if (Cast<AShellProjectCharacter>(InPawn))
 	{
 		ApplyShellPresentation();
@@ -215,14 +217,10 @@ UShellWorldScreen* AShellProjectPlayerController::GetWorldScreenOrNull() const
 	return Char ? Char->GetWorldScreen() : nullptr;
 }
 
-bool AShellProjectPlayerController::IsActiveWorldScreenTyping() const
+UShellInputStateManager* AShellProjectPlayerController::GetInputStateManager() const
 {
-	const UShellWorldScreen* Screen = GetWorldScreenOrNull();
-	return Screen != nullptr
-		&& Screen->IsInputActive()
-		&& Screen->GetScreenComponent() != nullptr
-		&& Screen->GetScreenComponent()->IsVisible()
-		&& Screen->GetTerminalWidget() != nullptr;
+	UGameInstance* GI = GetGameInstance();
+	return GI ? GI->GetSubsystem<UShellInputStateManager>() : nullptr;
 }
 
 void AShellProjectPlayerController::ApplyShellPresentation()
@@ -281,12 +279,19 @@ void AShellProjectPlayerController::ApplyShellPresentation()
 	}
 	}
 
-	// 输入状态交由 UShellInputStateManager 声明式裁决：
-	// 面前态 UiTyping（焦点进终端），其余态 Gameplay（纯游戏输入）。
-	// 不走 SetShellUIFocus —— 它是 UiBrowse 兜底的薄映射，呈现态切换必须明确 UiTyping/Gameplay。
-	if (UShellInputStateManager* Mgr = GetGameInstance() ? GetGameInstance()->GetSubsystem<UShellInputStateManager>() : nullptr)
+	// 输入状态交由 UShellInputStateManager 声明式裁决：面前态请求 UI 呈现态
+	//（有活动打字面 → UiTyping 聚焦终端；终端控件未就绪 → UiBrowse，不虚标状态），
+	// 其余态请求纯游玩。判据不再由本函数自己算 —— 与 SetShellUIFocus 同源。
+	if (UShellInputStateManager* Mgr = GetInputStateManager())
 	{
-		Mgr->RequestState(PresentationState == EShellPresentationState::InputWindow ? Shell::InputState::UiTyping : Shell::InputState::Gameplay);
+		if (PresentationState == EShellPresentationState::InputWindow)
+		{
+			Mgr->RequestUiState();
+		}
+		else
+		{
+			Mgr->RequestGameplayState();
+		}
 	}
 }
 
