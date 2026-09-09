@@ -1,6 +1,7 @@
 #include "ShellProjectPlayerController.h"
 
 #include "Blueprint/UserWidget.h"
+#include "Components/WidgetComponent.h"
 #include "Engine/GameInstance.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -9,6 +10,8 @@
 #include "InputAction.h"
 #include "InputMappingContext.h"
 
+#include "Shell/Input/ShellInputStateCore.h"
+#include "Shell/Input/ShellInputStateManager.h"
 #include "Shell/Terminal/ShellQuickCommandHotkeys.h"
 #include "Shell/Terminal/ShellSettings.h"
 #include "Shell/Terminal/ShellSubsystem.h"
@@ -124,29 +127,21 @@ void AShellProjectPlayerController::BeginPlay()
 
 void AShellProjectPlayerController::SetShellUIFocus(bool bUIFocused)
 {
+	UShellInputStateManager* Mgr = GetGameInstance() ? GetGameInstance()->GetSubsystem<UShellInputStateManager>() : nullptr;
+	if (!Mgr)
+	{
+		return;
+	}
+
 	if (bUIFocused)
 	{
-		// GameAndUI + 按住左键时不隐藏光标：默认构造的 bHideCursorDuringCapture=true
-		// 会让按下瞬间视口捕获并隐藏光标，世界面片上的点击体验不像普通 UI。
-		FInputModeGameAndUI InputMode;
-		InputMode.SetHideCursorDuringCapture(false);
-		// M5 焦点修复：同步断言焦点目标。此前焦点完全依赖 ApplyShellPresentation
-		// 里 FocusTerminal() 的下一帧定时器 —— 同帧内再次切换输入模式或 PIE 失焦
-		// 会把延迟断言吞掉，之后键盘焦点停在 SViewport（打字进不了终端）。
-		if (UShellWorldScreen* Screen = GetWorldScreenOrNull())
-		{
-			if (UShellTerminalWidget* Terminal = Screen->GetTerminalWidget())
-			{
-				InputMode.SetWidgetToFocus(Terminal->GetFocusTarget());
-			}
-		}
-		SetInputMode(InputMode);
-		SetShowMouseCursor(true);
+		// 有活跃世界屏打字面 → UiTyping（聚焦终端）；否则 UiBrowse（只显示 UI 不抢焦）。
+		const bool bHasTypingSurface = IsActiveWorldScreenTyping();
+		Mgr->RequestState(bHasTypingSurface ? Shell::InputState::UiTyping : Shell::InputState::UiBrowse);
 	}
 	else
 	{
-		SetInputMode(FInputModeGameOnly());
-		SetShowMouseCursor(false);
+		Mgr->RequestState(Shell::InputState::Gameplay);
 	}
 }
 
@@ -220,6 +215,16 @@ UShellWorldScreen* AShellProjectPlayerController::GetWorldScreenOrNull() const
 	return Char ? Char->GetWorldScreen() : nullptr;
 }
 
+bool AShellProjectPlayerController::IsActiveWorldScreenTyping() const
+{
+	const UShellWorldScreen* Screen = GetWorldScreenOrNull();
+	return Screen != nullptr
+		&& Screen->IsInputActive()
+		&& Screen->GetScreenComponent() != nullptr
+		&& Screen->GetScreenComponent()->IsVisible()
+		&& Screen->GetTerminalWidget() != nullptr;
+}
+
 void AShellProjectPlayerController::ApplyShellPresentation()
 {
 	// 世界屏是唯一呈现载体（HUD 视口态已移除，仅保留手持两态）。
@@ -258,6 +263,8 @@ void AShellProjectPlayerController::ApplyShellPresentation()
 	case EShellPresentationState::InputWindow:
 	{
 		// 输入目标：前面大窗口 + 可输入，姿态=面前（近/居中/大）。
+		// 焦点不再在此直接 FocusTerminal：由 UShellInputStateManager 的
+		// UiTyping 态按"活动打字面"解析焦点目标（终端就绪后统一断言）。
 		if (WorldScreen)
 		{
 			WorldScreen->SetScreenVisible(true);
@@ -265,8 +272,6 @@ void AShellProjectPlayerController::ApplyShellPresentation()
 			{
 				Char->SetShellScreenPose(EShellScreenPose::Front);
 			}
-			// 聚焦终端输入框（组件内部延迟到下一帧，待 widget 窗口就绪）。
-			WorldScreen->FocusTerminal();
 		}
 		break;
 	}
@@ -276,9 +281,13 @@ void AShellProjectPlayerController::ApplyShellPresentation()
 	}
 	}
 
-	// 输入模式/光标策略统一入口：面前态 GameAndUI + 光标（按住不隐藏），
-	// 世界屏自包含指针输入处理点击/滚轮；其余态 GameOnly 纯游戏输入。
-	SetShellUIFocus(PresentationState == EShellPresentationState::InputWindow);
+	// 输入状态交由 UShellInputStateManager 声明式裁决：
+	// 面前态 UiTyping（焦点进终端），其余态 Gameplay（纯游戏输入）。
+	// 不走 SetShellUIFocus —— 它是 UiBrowse 兜底的薄映射，呈现态切换必须明确 UiTyping/Gameplay。
+	if (UShellInputStateManager* Mgr = GetGameInstance() ? GetGameInstance()->GetSubsystem<UShellInputStateManager>() : nullptr)
+	{
+		Mgr->RequestState(PresentationState == EShellPresentationState::InputWindow ? Shell::InputState::UiTyping : Shell::InputState::Gameplay);
+	}
 }
 
 // --- M5：快捷指令全局热键 + 悬浮菜单开关键 --------------------------------------
