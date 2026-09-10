@@ -86,15 +86,12 @@ void AShellProjectPlayerController::BeginPlay()
 
 	// 订阅终端面板捕获的宿主流控键（HostOwned 范式）：面板持有键盘焦点时
 	// Tab/ESC 经此到达（不依赖游戏输入管道，PIE 内外行为一致）。
-	if (UGameInstance* GI = GetGameInstance())
+	if (UShellSubsystem* Shell = GetShellSubsystem())
 	{
-		if (UShellSubsystem* Shell = GI->GetSubsystem<UShellSubsystem>())
-		{
-			Shell->OnHostFlowKey.AddUniqueDynamic(this, &AShellProjectPlayerController::HandleHostFlowKey);
+		Shell->OnHostFlowKey.AddUniqueDynamic(this, &AShellProjectPlayerController::HandleHostFlowKey);
 
-			// M5：快捷指令热键 —— 列表/绑定变化后重建 IMC（仅变更时调用，非每帧）。
-			Shell->OnQuickCommandsChanged.AddUniqueDynamic(this, &AShellProjectPlayerController::HandleQuickCommandsChanged);
-		}
+		// M5：快捷指令热键 —— 列表/绑定变化后重建 IMC（仅变更时调用，非每帧）。
+		Shell->OnQuickCommandsChanged.AddUniqueDynamic(this, &AShellProjectPlayerController::HandleQuickCommandsChanged);
 	}
 
 	if (ULocalPlayer* LocalPlayer = GetLocalPlayer())
@@ -222,6 +219,12 @@ UShellInputStateManager* AShellProjectPlayerController::GetInputStateManager() c
 	return GI ? GI->GetSubsystem<UShellInputStateManager>() : nullptr;
 }
 
+UShellSubsystem* AShellProjectPlayerController::GetShellSubsystem() const
+{
+	UGameInstance* GI = GetGameInstance();
+	return GI ? GI->GetSubsystem<UShellSubsystem>() : nullptr;
+}
+
 void AShellProjectPlayerController::ApplyShellPresentation()
 {
 	// 世界屏是唯一呈现载体（HUD 视口态已移除，仅保留手持两态）。
@@ -278,20 +281,10 @@ void AShellProjectPlayerController::ApplyShellPresentation()
 	}
 	}
 
-	// 输入状态交由 UShellInputStateManager 声明式裁决：面前态请求 UI 呈现态
-	//（有活动打字面 → UiTyping 聚焦终端；终端控件未就绪 → UiBrowse，不虚标状态），
-	// 其余态请求纯游玩。判据不再由本函数自己算 —— 与 SetShellUIFocus 同源。
-	if (UShellInputStateManager* Mgr = GetInputStateManager())
-	{
-		if (PresentationState == EShellPresentationState::InputWindow)
-		{
-			Mgr->RequestUiState();
-		}
-		else
-		{
-			Mgr->RequestGameplayState();
-		}
-	}
+	// 输入状态交由 UShellInputStateManager 声明式裁决：面前态 = "要 UI"，
+	// 其余态 = 纯游玩。刻意复用 SetShellUIFocus 而非再写一份分支 —— 让
+	// "两个入口判据一致"成为结构事实，而不是靠两处代码长得一样来维持。
+	SetShellUIFocus(PresentationState == EShellPresentationState::InputWindow);
 }
 
 // --- M5：快捷指令全局热键 + 悬浮菜单开关键 --------------------------------------
@@ -343,7 +336,7 @@ void AShellProjectPlayerController::RebuildHotkeyMapping()
 	}
 	QuickHotkeyBindingHandles.Reset();
 
-	UShellSubsystem* Shell = GetGameInstance() ? GetGameInstance()->GetSubsystem<UShellSubsystem>() : nullptr;
+	UShellSubsystem* Shell = GetShellSubsystem();
 	if (!Shell)
 	{
 		return;
@@ -397,7 +390,7 @@ void AShellProjectPlayerController::HandleQuickCommandHotkey(const FShellHotkeyC
 		return;
 	}
 
-	UShellSubsystem* Shell = GetGameInstance() ? GetGameInstance()->GetSubsystem<UShellSubsystem>() : nullptr;
+	UShellSubsystem* Shell = GetShellSubsystem();
 	if (!Shell)
 	{
 		return;
@@ -410,7 +403,7 @@ void AShellProjectPlayerController::HandleQuickCommandHotkey(const FShellHotkeyC
 
 void AShellProjectPlayerController::RebuildMenuToggleMapping()
 {
-	UShellSubsystem* Shell = GetGameInstance() ? GetGameInstance()->GetSubsystem<UShellSubsystem>() : nullptr;
+	UShellSubsystem* Shell = GetShellSubsystem();
 	if (!Shell)
 	{
 		return;
@@ -470,7 +463,7 @@ void AShellProjectPlayerController::RebuildMenuToggleMapping()
 
 void AShellProjectPlayerController::HandleMenuToggleKey()
 {
-	UShellSubsystem* Shell = GetGameInstance() ? GetGameInstance()->GetSubsystem<UShellSubsystem>() : nullptr;
+	UShellSubsystem* Shell = GetShellSubsystem();
 	if (!Shell)
 	{
 		return;

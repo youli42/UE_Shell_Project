@@ -10,6 +10,7 @@ class UInputAction;
 class UInputMappingContext;
 class UShellFloatingQuickButton;
 class UShellInputStateManager;
+class UShellSubsystem;
 class UShellTerminalWidget;
 class UShellWorldScreen;
 struct FShellHotkeyChord;
@@ -96,6 +97,9 @@ private:
 
 	/** 输入状态管理器（GameInstance 子系统；不可用时返回 null）。 */
 	UShellInputStateManager* GetInputStateManager() const;
+
+	/** Shell 子系统（GameInstance 子系统；不可用时返回 null）。 */
+	UShellSubsystem* GetShellSubsystem() const;
 
 	/** Tab 终端开关动作（插件资产；软引用，可由蓝图/编辑器替换绑定）。 */
 	UPROPERTY(EditAnywhere, Category = "Shell|Input")
